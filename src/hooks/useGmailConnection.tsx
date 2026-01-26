@@ -153,13 +153,24 @@ export function useGmailConnection() {
     setIsScanning(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke('gmail-scan', {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/gmail-scan`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+        }
+      );
 
-      if (error) throw error;
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
 
       if (data?.returns) {
         setDetectedReturns(data.returns);
@@ -173,9 +184,10 @@ export function useGmailConnection() {
       fetchGmailAccount();
     } catch (error) {
       console.error('Error scanning emails:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       toast({
         title: 'Scan Failed',
-        description: 'Could not scan emails. Please try again.',
+        description: `Could not scan emails: ${errorMessage}`,
         variant: 'destructive',
       });
     } finally {
