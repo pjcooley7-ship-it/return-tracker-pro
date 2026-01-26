@@ -1,5 +1,3 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -124,11 +122,15 @@ function extractTrackingNumber(text: string): { carrier: string; number: string 
 }
 
 Deno.serve(async (req) => {
+  // Handle CORS preflight immediately
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
+    // Lazy import to speed up cold start
+    const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.49.1");
+    
     console.log("gmail-scan: Starting request");
     
     const authHeader = req.headers.get("Authorization");
