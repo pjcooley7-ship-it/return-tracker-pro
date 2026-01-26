@@ -20,6 +20,16 @@ interface DetectedReturn {
   tracking: { carrier: string; number: string } | null;
 }
 
+interface ScannedEmail {
+  subject: string;
+  from: string;
+  date: string;
+  emailId: string;
+  isReturnRelated: boolean;
+  detectedVendor: string | null;
+  reason: string;
+}
+
 export function useGmailConnection() {
   const { session } = useAuth();
   const { toast } = useToast();
@@ -28,6 +38,8 @@ export function useGmailConnection() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [detectedReturns, setDetectedReturns] = useState<DetectedReturn[]>([]);
+  const [scannedEmails, setScannedEmails] = useState<ScannedEmail[]>([]);
+  const [lastScanStats, setLastScanStats] = useState<{ scannedCount: number; processedCount: number } | null>(null);
 
   // Fetch connected Gmail account
   const fetchGmailAccount = useCallback(async () => {
@@ -174,11 +186,21 @@ export function useGmailConnection() {
 
       if (data?.returns) {
         setDetectedReturns(data.returns);
-        toast({
-          title: 'Scan Complete',
-          description: `Found ${data.returns.length} potential returns in ${data.scannedCount} emails.`,
+      }
+      if (data?.scannedEmails) {
+        setScannedEmails(data.scannedEmails);
+      }
+      if (data?.scannedCount !== undefined) {
+        setLastScanStats({
+          scannedCount: data.scannedCount,
+          processedCount: data.processedCount || 0,
         });
       }
+      
+      toast({
+        title: 'Scan Complete',
+        description: `Found ${data.returns?.length || 0} potential returns in ${data.scannedCount || 0} emails.`,
+      });
 
       // Refresh account to get updated last_sync_at
       fetchGmailAccount();
@@ -201,6 +223,8 @@ export function useGmailConnection() {
     isConnecting,
     isScanning,
     detectedReturns,
+    scannedEmails,
+    lastScanStats,
     connectGmail,
     disconnectGmail,
     scanEmails,

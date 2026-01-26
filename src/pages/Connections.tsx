@@ -8,6 +8,7 @@ import { Mail, Building2, Check, AlertCircle, Loader2, RefreshCw, X } from 'luci
 import { useGmailConnection } from '@/hooks/useGmailConnection';
 import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
+import { ScannedEmailsPanel } from '@/components/connections/ScannedEmailsPanel';
 
 export default function Connections() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -17,6 +18,8 @@ export default function Connections() {
     isLoading,
     isConnecting,
     isScanning,
+    scannedEmails,
+    lastScanStats,
     connectGmail,
     disconnectGmail,
     scanEmails,
@@ -191,7 +194,9 @@ export default function Connections() {
         </Card>
       </div>
 
-      {/* Security Note */}
+      {/* Scanned Emails Results */}
+      <ScannedEmailsPanel scannedEmails={scannedEmails} lastScanStats={lastScanStats} />
+
       <Card className="mt-6 bg-muted/50">
         <CardContent className="flex items-start gap-4 p-6">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10">
