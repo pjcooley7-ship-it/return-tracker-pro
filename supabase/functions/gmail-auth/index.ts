@@ -40,6 +40,7 @@ Deno.serve(async (req) => {
     }
 
     const userId = userData.user.id;
+    const userEmail = userData.user.email;
 
     // Get Google OAuth credentials
     const clientId = Deno.env.get("GOOGLE_CLIENT_ID");
@@ -68,7 +69,12 @@ Deno.serve(async (req) => {
     authUrl.searchParams.set("response_type", "code");
     authUrl.searchParams.set("scope", scopes.join(" "));
     authUrl.searchParams.set("access_type", "offline");
-    authUrl.searchParams.set("prompt", "consent");
+    // Force account chooser and consent screen; helps when users are signed into multiple Google accounts.
+    authUrl.searchParams.set("prompt", "consent select_account");
+    if (userEmail) {
+      // Hint Google which account should be used (usually the test-user email).
+      authUrl.searchParams.set("login_hint", userEmail);
+    }
     authUrl.searchParams.set("state", state);
 
     return new Response(
