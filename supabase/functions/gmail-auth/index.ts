@@ -1,21 +1,19 @@
-import { createClient } from "@supabase/supabase-js";
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 Deno.serve(async (req) => {
-  console.log("gmail-auth: Request received", req.method);
-  
-  // Handle CORS preflight
+  // Handle CORS preflight immediately
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
+    // Lazy import to speed up cold start
+    const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.49.1");
+    
     const authHeader = req.headers.get("Authorization");
-    console.log("gmail-auth: Auth header present:", !!authHeader);
     
     if (!authHeader?.startsWith("Bearer ")) {
       return new Response(
@@ -27,8 +25,6 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     
-    console.log("gmail-auth: Supabase URL:", supabaseUrl);
-    
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
       global: { headers: { Authorization: authHeader } },
     });
@@ -37,7 +33,6 @@ Deno.serve(async (req) => {
     const { data: userData, error: userError } = await supabase.auth.getUser();
     
     if (userError || !userData?.user) {
-      console.log("gmail-auth: User verification failed", userError?.message);
       return new Response(
         JSON.stringify({ error: "Unauthorized" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -45,22 +40,18 @@ Deno.serve(async (req) => {
     }
 
     const userId = userData.user.id;
-    console.log("gmail-auth: User verified:", userId);
 
     // Get Google OAuth credentials
     const clientId = Deno.env.get("GOOGLE_CLIENT_ID");
-    console.log("gmail-auth: Client ID present:", !!clientId);
     
     if (!clientId) {
-      console.error("gmail-auth: GOOGLE_CLIENT_ID not configured");
       return new Response(
-        JSON.stringify({ error: "OAuth not configured - missing GOOGLE_CLIENT_ID" }),
+        JSON.stringify({ error: "OAuth not configured" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     const redirectUri = `${supabaseUrl}/functions/v1/gmail-callback`;
-    console.log("gmail-auth: Redirect URI:", redirectUri);
 
     // Generate state with user ID for security
     const state = btoa(JSON.stringify({ userId, timestamp: Date.now() }));
@@ -80,8 +71,6 @@ Deno.serve(async (req) => {
     authUrl.searchParams.set("prompt", "consent");
     authUrl.searchParams.set("state", state);
 
-    console.log("gmail-auth: Generated OAuth URL successfully");
-
     return new Response(
       JSON.stringify({ authUrl: authUrl.toString() }),
       { 
@@ -90,9 +79,9 @@ Deno.serve(async (req) => {
       }
     );
   } catch (error) {
-    console.error("gmail-auth: Error:", error);
+    console.error("gmail-auth error:", error);
     return new Response(
-      JSON.stringify({ error: "Internal server error", details: String(error) }),
+      JSON.stringify({ error: "Internal server error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

@@ -74,22 +74,29 @@ export function useGmailConnection() {
     setIsConnecting(true);
 
     try {
-      console.log('Calling gmail-auth edge function...');
-      
-      const { data, error } = await supabase.functions.invoke('gmail-auth');
+      // Use direct fetch to avoid Supabase client issues
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/gmail-auth`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+            'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+        }
+      );
 
-      console.log('gmail-auth response:', { data, error });
-
-      if (error) {
-        console.error('Edge function error:', error);
-        throw error;
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${response.status}`);
       }
 
+      const data = await response.json();
+
       if (data?.authUrl) {
-        console.log('Redirecting to OAuth URL');
         window.location.href = data.authUrl;
       } else {
-        console.error('No authUrl in response:', data);
         throw new Error('No auth URL returned');
       }
     } catch (error) {
