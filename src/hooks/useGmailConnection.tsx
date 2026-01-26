@@ -152,7 +152,7 @@ export function useGmailConnection() {
   };
 
   // Scan emails for returns
-  const scanEmails = async () => {
+  const scanEmails = async (scanRange: string = '30d') => {
     if (!session?.access_token || !gmailAccount?.is_active) {
       toast({
         title: 'Error',
@@ -161,6 +161,10 @@ export function useGmailConnection() {
       });
       return;
     }
+
+    // Extract days from range (e.g., '30d' -> 30)
+    const daysMatch = scanRange.match(/^(\d+)d$/);
+    const days = daysMatch ? parseInt(daysMatch[1], 10) : 30;
 
     setIsScanning(true);
 
@@ -174,6 +178,7 @@ export function useGmailConnection() {
             Authorization: `Bearer ${session.access_token}`,
             apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
           },
+          body: JSON.stringify({ days }),
         }
       );
 

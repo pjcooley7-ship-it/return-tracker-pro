@@ -1,17 +1,30 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Mail, Building2, Check, AlertCircle, Loader2, RefreshCw, X } from 'lucide-react';
 import { useGmailConnection } from '@/hooks/useGmailConnection';
 import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
 import { ScannedEmailsPanel } from '@/components/connections/ScannedEmailsPanel';
 
+type ScanRange = '7d' | '30d' | '60d' | '90d' | '180d' | '365d';
+
+const SCAN_RANGE_OPTIONS: { value: ScanRange; label: string }[] = [
+  { value: '7d', label: 'Last 7 days' },
+  { value: '30d', label: 'Last 30 days' },
+  { value: '60d', label: 'Last 60 days' },
+  { value: '90d', label: 'Last 90 days' },
+  { value: '180d', label: 'Last 6 months' },
+  { value: '365d', label: 'Last year' },
+];
+
 export default function Connections() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const [scanRange, setScanRange] = useState<ScanRange>('30d');
   const { toast } = useToast();
   const {
     gmailAccount,
@@ -112,32 +125,49 @@ export default function Connections() {
                     Last synced {formatDistanceToNow(new Date(gmailAccount.last_sync_at), { addSuffix: true })}
                   </p>
                 )}
-                <div className="flex gap-2">
-                  <Button
-                    onClick={scanEmails}
-                    disabled={isScanning}
-                    className="flex-1"
-                  >
-                    {isScanning ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Scanning...
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className="mr-2 h-4 w-4" />
-                        Scan Emails
-                      </>
-                    )}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={disconnectGmail}
-                    title="Disconnect Gmail"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground whitespace-nowrap">Scan range:</span>
+                    <Select value={scanRange} onValueChange={(v) => setScanRange(v as ScanRange)}>
+                      <SelectTrigger className="flex-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SCAN_RANGE_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => scanEmails(scanRange)}
+                      disabled={isScanning}
+                      className="flex-1"
+                    >
+                      {isScanning ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Scanning...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="mr-2 h-4 w-4" />
+                          Scan Emails
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={disconnectGmail}
+                      title="Disconnect Gmail"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             ) : (
