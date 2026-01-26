@@ -5,26 +5,87 @@ const corsHeaders = {
 
 // Common retail patterns for purchase/return emails
 const VENDOR_PATTERNS = [
+  // Major marketplaces
   { pattern: /amazon/i, name: "Amazon" },
-  { pattern: /target/i, name: "Target" },
+  { pattern: /ebay/i, name: "eBay" },
+  { pattern: /etsy/i, name: "Etsy" },
   { pattern: /walmart/i, name: "Walmart" },
+  { pattern: /target/i, name: "Target" },
+  { pattern: /costco/i, name: "Costco" },
+  // Electronics
   { pattern: /bestbuy|best buy/i, name: "Best Buy" },
   { pattern: /apple/i, name: "Apple" },
+  { pattern: /newegg/i, name: "Newegg" },
+  { pattern: /b&h|bhphoto/i, name: "B&H Photo" },
+  // Fashion & Apparel
   { pattern: /nike/i, name: "Nike" },
   { pattern: /adidas/i, name: "Adidas" },
   { pattern: /nordstrom/i, name: "Nordstrom" },
   { pattern: /macys|macy's/i, name: "Macy's" },
   { pattern: /kohls|kohl's/i, name: "Kohl's" },
-  { pattern: /costco/i, name: "Costco" },
+  { pattern: /zappos/i, name: "Zappos" },
+  { pattern: /zara/i, name: "Zara" },
+  { pattern: /h&m|hm\.com/i, name: "H&M" },
+  { pattern: /gap\.com|gap inc/i, name: "Gap" },
+  { pattern: /old navy/i, name: "Old Navy" },
+  { pattern: /banana republic/i, name: "Banana Republic" },
+  { pattern: /uniqlo/i, name: "Uniqlo" },
+  { pattern: /asos/i, name: "ASOS" },
+  { pattern: /shein/i, name: "SHEIN" },
+  { pattern: /forever ?21/i, name: "Forever 21" },
+  { pattern: /urban outfitters/i, name: "Urban Outfitters" },
+  { pattern: /anthropologie/i, name: "Anthropologie" },
+  { pattern: /lululemon/i, name: "Lululemon" },
+  { pattern: /under armour/i, name: "Under Armour" },
+  { pattern: /foot locker/i, name: "Foot Locker" },
+  { pattern: /dick'?s sporting/i, name: "Dick's Sporting Goods" },
+  // Home & Furniture
   { pattern: /home depot/i, name: "Home Depot" },
   { pattern: /lowes|lowe's/i, name: "Lowe's" },
   { pattern: /wayfair/i, name: "Wayfair" },
-  { pattern: /etsy/i, name: "Etsy" },
-  { pattern: /ebay/i, name: "eBay" },
-  { pattern: /zappos/i, name: "Zappos" },
+  { pattern: /ikea/i, name: "IKEA" },
+  { pattern: /overstock/i, name: "Overstock" },
+  { pattern: /pottery barn/i, name: "Pottery Barn" },
+  { pattern: /williams[- ]sonoma/i, name: "Williams Sonoma" },
+  { pattern: /crate\s*&?\s*barrel/i, name: "Crate & Barrel" },
+  { pattern: /bed\s*bath/i, name: "Bed Bath & Beyond" },
+  // Beauty & Personal Care
+  { pattern: /sephora/i, name: "Sephora" },
+  { pattern: /ulta/i, name: "Ulta Beauty" },
+  // Office & Supplies
+  { pattern: /staples/i, name: "Staples" },
+  { pattern: /office\s*depot|officedepot/i, name: "Office Depot" },
+  // Pet
+  { pattern: /chewy/i, name: "Chewy" },
+  { pattern: /petco/i, name: "Petco" },
+  { pattern: /petsmart/i, name: "PetSmart" },
+  // Other major retailers
+  { pattern: /jcpenney|jc\s*penney/i, name: "JCPenney" },
+  { pattern: /sears/i, name: "Sears" },
+  { pattern: /kmart/i, name: "Kmart" },
+  { pattern: /tj\s*maxx|tjmaxx/i, name: "TJ Maxx" },
+  { pattern: /marshalls/i, name: "Marshalls" },
+  { pattern: /ross\s*stores/i, name: "Ross" },
+  { pattern: /burlington/i, name: "Burlington" },
+  { pattern: /dollar\s*general/i, name: "Dollar General" },
+  { pattern: /cvs/i, name: "CVS" },
+  { pattern: /walgreens/i, name: "Walgreens" },
+  { pattern: /rite\s*aid/i, name: "Rite Aid" },
+  // Tech & Gaming
+  { pattern: /microsoft\s*store/i, name: "Microsoft Store" },
+  { pattern: /playstation|sony\s*store/i, name: "PlayStation Store" },
+  { pattern: /nintendo/i, name: "Nintendo" },
+  { pattern: /steam/i, name: "Steam" },
+  { pattern: /gamestop/i, name: "GameStop" },
+  // Subscription boxes & DTC brands
+  { pattern: /stitch\s*fix/i, name: "Stitch Fix" },
+  { pattern: /warby\s*parker/i, name: "Warby Parker" },
+  { pattern: /casper/i, name: "Casper" },
+  { pattern: /allbirds/i, name: "Allbirds" },
+  { pattern: /everlane/i, name: "Everlane" },
 ];
 
-// Keywords for return-related emails
+// Keywords for return-related emails (retail/e-commerce context)
 const RETURN_KEYWORDS = [
   "return confirmation",
   "return label",
@@ -35,6 +96,49 @@ const RETURN_KEYWORDS = [
   "return request",
   "package return",
   "your return",
+  "return merchandise",
+  "return your order",
+  "return your item",
+  "return instructions",
+  "drop off your return",
+  "print return label",
+  "schedule pickup",
+  "refund processed",
+  "refund complete",
+  "money back",
+  "credit issued",
+  "exchange request",
+];
+
+// Keywords that indicate NON-retail returns (false positives to exclude)
+const EXCLUDE_KEYWORDS = [
+  "tax return",
+  "tax refund",
+  "irs",
+  "internal revenue",
+  "w-2",
+  "w2",
+  "1099",
+  "turbotax",
+  "h&r block",
+  "hrblock",
+  "taxact",
+  "tax preparation",
+  "tax filing",
+  "return on investment",
+  "roi",
+  "annual return",
+  "quarterly return",
+  "investment return",
+  "stock return",
+  "dividend",
+  "portfolio",
+  "financial return",
+  "survey return",
+  "return call",
+  "return phone call",
+  "job application",
+  "interview",
 ];
 
 interface GmailMessage {
@@ -72,9 +176,18 @@ function detectVendor(from: string, subject: string): string | null {
   return null;
 }
 
-function isReturnRelated(subject: string, body: string): boolean {
+function isReturnRelated(subject: string, body: string): { isRelated: boolean; isExcluded: boolean } {
   const combined = `${subject} ${body}`.toLowerCase();
-  return RETURN_KEYWORDS.some((keyword) => combined.includes(keyword));
+  
+  // Check for exclusion keywords first (tax returns, investment returns, etc.)
+  const hasExcludeKeyword = EXCLUDE_KEYWORDS.some((keyword) => combined.includes(keyword));
+  if (hasExcludeKeyword) {
+    return { isRelated: false, isExcluded: true };
+  }
+  
+  // Check for return-related keywords
+  const hasReturnKeyword = RETURN_KEYWORDS.some((keyword) => combined.includes(keyword));
+  return { isRelated: hasReturnKeyword, isExcluded: false };
 }
 
 function extractOrderNumber(text: string): string | null {
@@ -272,8 +385,8 @@ Deno.serve(async (req) => {
     }> = [];
 
     // Process each message
-    for (const msg of messages.slice(0, 20)) {
-      // Limit to 20 for performance
+    for (const msg of messages.slice(0, 50)) {
+      // Process up to 50 emails for better coverage
       const msgUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`;
       const msgResponse = await fetch(msgUrl, {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -313,15 +426,17 @@ Deno.serve(async (req) => {
 
       const fullText = `${subject} ${body}`;
 
-      // Check if this is return-related
-      const returnRelated = isReturnRelated(subject, body);
+      // Check if this is return-related (and not a false positive like tax returns)
+      const { isRelated: returnRelated, isExcluded } = isReturnRelated(subject, body);
       
       // Detect vendor
       const vendor = detectVendor(from, subject);
 
       // Build reason string
       let reason = "";
-      if (!returnRelated) {
+      if (isExcluded) {
+        reason = "Excluded (tax/investment/non-retail context)";
+      } else if (!returnRelated) {
         reason = "No return keywords found";
       } else if (!vendor) {
         reason = "Return-related but unknown vendor";
@@ -334,12 +449,12 @@ Deno.serve(async (req) => {
         from,
         date,
         emailId: msg.id,
-        isReturnRelated: returnRelated,
+        isReturnRelated: returnRelated && !isExcluded,
         detectedVendor: vendor,
         reason,
       });
 
-      if (!returnRelated || !vendor) continue;
+      if (!returnRelated || isExcluded || !vendor) continue;
 
       // Extract data
       const orderNumber = extractOrderNumber(fullText);
