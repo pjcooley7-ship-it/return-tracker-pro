@@ -129,6 +129,8 @@ Deno.serve(async (req) => {
   }
 
   try {
+    console.log("gmail-scan: Starting request");
+    
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return new Response(
@@ -144,18 +146,19 @@ Deno.serve(async (req) => {
       global: { headers: { Authorization: authHeader } },
     });
 
-    // Verify the user
-    const token = authHeader.replace("Bearer ", "");
-    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
+    // Verify the user using getUser
+    const { data: userData, error: userError } = await supabase.auth.getUser();
 
-    if (claimsError || !claimsData?.claims) {
+    if (userError || !userData?.user) {
+      console.log("gmail-scan: User verification failed", userError);
       return new Response(
         JSON.stringify({ error: "Unauthorized" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const userId = claimsData.claims.sub;
+    const userId = userData.user.id;
+    console.log(`gmail-scan: User verified: ${userId}`);
 
     // Get connected Gmail account
     const { data: account, error: accountError } = await supabase
@@ -167,6 +170,7 @@ Deno.serve(async (req) => {
       .single();
 
     if (accountError || !account) {
+      console.log("gmail-scan: No Gmail account found");
       return new Response(
         JSON.stringify({ error: "Gmail not connected" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -177,7 +181,7 @@ Deno.serve(async (req) => {
 
     // Check if token is expired and refresh if needed
     if (account.token_expires_at && new Date(account.token_expires_at) < new Date()) {
-      console.log("Token expired, refreshing...");
+      console.log("gmail-scan: Token expired, refreshing...");
 
       const clientId = Deno.env.get("GOOGLE_CLIENT_ID")!;
       const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
@@ -194,7 +198,7 @@ Deno.serve(async (req) => {
       });
 
       if (!refreshResponse.ok) {
-        console.error("Token refresh failed");
+        console.error("gmail-scan: Token refresh failed");
         // Mark account as inactive
         await supabase
           .from("connected_accounts")
@@ -224,13 +228,15 @@ Deno.serve(async (req) => {
     const query = "subject:(return OR refund OR RMA) newer_than:30d";
     const searchUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=50`;
 
+    console.log("gmail-scan: Searching emails");
+    
     const searchResponse = await fetch(searchUrl, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 
     if (!searchResponse.ok) {
       const errorText = await searchResponse.text();
-      console.error("Gmail search failed:", errorText);
+      console.error("gmail-scan: Gmail search failed:", errorText);
       return new Response(
         JSON.stringify({ error: "Failed to search emails" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -240,7 +246,7 @@ Deno.serve(async (req) => {
     const searchData = await searchResponse.json();
     const messages = searchData.messages || [];
 
-    console.log(`Found ${messages.length} potential return emails`);
+    console.log(`gmail-scan: Found ${messages.length} potential return emails`);
 
     const detectedReturns: Array<{
       vendor: string;
@@ -312,7 +318,7 @@ Deno.serve(async (req) => {
       .update({ last_sync_at: new Date().toISOString() })
       .eq("id", account.id);
 
-    console.log(`Detected ${detectedReturns.length} returns`);
+    console.log(`gmail-scan: Detected ${detectedReturns.length} returns`);
 
     return new Response(
       JSON.stringify({
@@ -323,7 +329,7 @@ Deno.serve(async (req) => {
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("Error in gmail-scan:", error);
+    console.error("gmail-scan: Error:", error);
     return new Response(
       JSON.stringify({ error: "Internal server error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

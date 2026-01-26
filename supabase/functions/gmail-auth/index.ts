@@ -12,8 +12,11 @@ Deno.serve(async (req) => {
   }
 
   try {
+    console.log("gmail-auth: Starting request");
+    
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
+      console.log("gmail-auth: No auth header");
       return new Response(
         JSON.stringify({ error: "Unauthorized" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -23,34 +26,39 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     
+    console.log("gmail-auth: Creating Supabase client");
+    
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
       global: { headers: { Authorization: authHeader } },
     });
 
-    // Verify the user
-    const token = authHeader.replace("Bearer ", "");
-    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
+    // Verify the user using getUser
+    const { data: userData, error: userError } = await supabase.auth.getUser();
     
-    if (claimsError || !claimsData?.claims) {
+    if (userError || !userData?.user) {
+      console.log("gmail-auth: User verification failed", userError);
       return new Response(
         JSON.stringify({ error: "Unauthorized" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const userId = claimsData.claims.sub;
+    const userId = userData.user.id;
+    console.log(`gmail-auth: User verified: ${userId}`);
 
     // Get Google OAuth credentials
     const clientId = Deno.env.get("GOOGLE_CLIENT_ID");
     const redirectUri = `${supabaseUrl}/functions/v1/gmail-callback`;
     
     if (!clientId) {
-      console.error("GOOGLE_CLIENT_ID not configured");
+      console.error("gmail-auth: GOOGLE_CLIENT_ID not configured");
       return new Response(
         JSON.stringify({ error: "OAuth not configured" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    console.log("gmail-auth: Building OAuth URL");
 
     // Generate state with user ID for security
     const state = btoa(JSON.stringify({ userId, timestamp: Date.now() }));
@@ -70,7 +78,7 @@ Deno.serve(async (req) => {
     authUrl.searchParams.set("prompt", "consent");
     authUrl.searchParams.set("state", state);
 
-    console.log(`Generated OAuth URL for user ${userId}`);
+    console.log(`gmail-auth: Generated OAuth URL for user ${userId}`);
 
     return new Response(
       JSON.stringify({ authUrl: authUrl.toString() }),
@@ -80,7 +88,7 @@ Deno.serve(async (req) => {
       }
     );
   } catch (error) {
-    console.error("Error in gmail-auth:", error);
+    console.error("gmail-auth: Error:", error);
     return new Response(
       JSON.stringify({ error: "Internal server error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
