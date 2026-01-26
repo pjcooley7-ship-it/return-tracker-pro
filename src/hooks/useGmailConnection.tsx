@@ -20,12 +20,13 @@ interface DetectedReturn {
   tracking: { carrier: string; number: string } | null;
 }
 
-interface ScannedEmail {
+export interface ScannedEmail {
   subject: string;
   from: string;
   date: string;
   emailId: string;
   isReturnRelated: boolean;
+  userOverride?: boolean;
   detectedVendor: string | null;
   reason: string;
 }
@@ -218,8 +219,26 @@ export function useGmailConnection() {
         variant: 'destructive',
       });
     } finally {
-      setIsScanning(false);
+    setIsScanning(false);
     }
+  };
+
+  // Toggle return status for a scanned email
+  const toggleReturnStatus = (emailId: string) => {
+    setScannedEmails((prev) =>
+      prev.map((email) =>
+        email.emailId === emailId
+          ? {
+              ...email,
+              isReturnRelated: !email.isReturnRelated,
+              userOverride: true,
+              reason: !email.isReturnRelated
+                ? 'Manually marked as return'
+                : 'Manually marked as not return',
+            }
+          : email
+      )
+    );
   };
 
   return {
@@ -233,6 +252,7 @@ export function useGmailConnection() {
     connectGmail,
     disconnectGmail,
     scanEmails,
+    toggleReturnStatus,
     refetch: fetchGmailAccount,
   };
 }
