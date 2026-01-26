@@ -260,6 +260,17 @@ Deno.serve(async (req) => {
       tracking: { carrier: string; number: string } | null;
     }> = [];
 
+    // Store all scanned emails for debugging
+    const scannedEmails: Array<{
+      subject: string;
+      from: string;
+      date: string;
+      emailId: string;
+      isReturnRelated: boolean;
+      detectedVendor: string | null;
+      reason: string;
+    }> = [];
+
     // Process each message
     for (const msg of messages.slice(0, 20)) {
       // Limit to 20 for performance
@@ -268,11 +279,22 @@ Deno.serve(async (req) => {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
 
-      if (!msgResponse.ok) continue;
+      if (!msgResponse.ok) {
+        scannedEmails.push({
+          subject: "(failed to fetch)",
+          from: "",
+          date: "",
+          emailId: msg.id,
+          isReturnRelated: false,
+          detectedVendor: null,
+          reason: "Failed to fetch email details",
+        });
+        continue;
+      }
 
       const message: GmailMessage = await msgResponse.json();
       const headers = message.payload?.headers;
-      const subject = extractHeader(headers, "Subject") || "";
+      const subject = extractHeader(headers, "Subject") || "(no subject)";
       const from = extractHeader(headers, "From") || "";
       const date = extractHeader(headers, "Date") || "";
 
@@ -292,11 +314,32 @@ Deno.serve(async (req) => {
       const fullText = `${subject} ${body}`;
 
       // Check if this is return-related
-      if (!isReturnRelated(subject, body)) continue;
-
+      const returnRelated = isReturnRelated(subject, body);
+      
       // Detect vendor
       const vendor = detectVendor(from, subject);
-      if (!vendor) continue;
+
+      // Build reason string
+      let reason = "";
+      if (!returnRelated) {
+        reason = "No return keywords found";
+      } else if (!vendor) {
+        reason = "Return-related but unknown vendor";
+      } else {
+        reason = "Detected as return";
+      }
+
+      scannedEmails.push({
+        subject,
+        from,
+        date,
+        emailId: msg.id,
+        isReturnRelated: returnRelated,
+        detectedVendor: vendor,
+        reason,
+      });
+
+      if (!returnRelated || !vendor) continue;
 
       // Extract data
       const orderNumber = extractOrderNumber(fullText);
@@ -320,13 +363,15 @@ Deno.serve(async (req) => {
       .update({ last_sync_at: new Date().toISOString() })
       .eq("id", account.id);
 
-    console.log(`gmail-scan: Detected ${detectedReturns.length} returns`);
+    console.log(`gmail-scan: Detected ${detectedReturns.length} returns from ${scannedEmails.length} emails`);
 
     return new Response(
       JSON.stringify({
         success: true,
         returns: detectedReturns,
+        scannedEmails,
         scannedCount: messages.length,
+        processedCount: scannedEmails.length,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
