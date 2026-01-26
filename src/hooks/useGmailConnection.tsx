@@ -74,25 +74,30 @@ export function useGmailConnection() {
     setIsConnecting(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke('gmail-auth', {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
+      console.log('Calling gmail-auth edge function...');
+      
+      const { data, error } = await supabase.functions.invoke('gmail-auth');
 
-      if (error) throw error;
+      console.log('gmail-auth response:', { data, error });
+
+      if (error) {
+        console.error('Edge function error:', error);
+        throw error;
+      }
 
       if (data?.authUrl) {
-        // Redirect to Google OAuth
+        console.log('Redirecting to OAuth URL');
         window.location.href = data.authUrl;
       } else {
+        console.error('No authUrl in response:', data);
         throw new Error('No auth URL returned');
       }
     } catch (error) {
       console.error('Error connecting Gmail:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       toast({
         title: 'Connection Failed',
-        description: 'Could not start Gmail connection. Please try again.',
+        description: `Could not start Gmail connection: ${errorMessage}`,
         variant: 'destructive',
       });
     } finally {
