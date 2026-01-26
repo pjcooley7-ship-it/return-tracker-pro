@@ -1,0 +1,56 @@
+import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { ReturnCard } from '@/components/dashboard/ReturnCard';
+import { useReturns } from '@/hooks/useReturns';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { CheckCircle } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
+
+export default function CompletedReturns() {
+  const { returns, isLoading } = useReturns();
+
+  const completedReturns = returns.filter(r => r.status === 'refunded');
+
+  return (
+    <DashboardLayout title="Completed Returns">
+      <div className="mb-6">
+        <p className="text-muted-foreground">
+          Returns that have been successfully refunded
+        </p>
+      </div>
+
+      {isLoading ? (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {[1, 2, 3].map(i => (
+            <Card key={i}>
+              <CardHeader>
+                <Skeleton className="h-6 w-32" />
+                <Skeleton className="h-4 w-24" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-20 w-full" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : completedReturns.length === 0 ? (
+        <Card className="border-dashed">
+          <CardHeader className="text-center pb-2">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+              <CheckCircle className="h-6 w-6 text-muted-foreground" />
+            </div>
+            <CardTitle>No completed returns yet</CardTitle>
+            <CardDescription>
+              When your returns are refunded, they'll appear here.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {completedReturns.map(ret => (
+            <ReturnCard key={ret.id} returnItem={ret} />
+          ))}
+        </div>
+      )}
+    </DashboardLayout>
+  );
+}
