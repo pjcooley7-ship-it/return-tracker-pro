@@ -1,8 +1,9 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
-import { Check, X, AlertCircle } from 'lucide-react';
+import { Check, X, AlertCircle, Save, Loader2 } from 'lucide-react';
 
 export interface ScannedEmail {
   subject: string;
@@ -19,9 +20,17 @@ interface ScannedEmailsPanelProps {
   scannedEmails: ScannedEmail[];
   lastScanStats: { scannedCount: number; processedCount: number } | null;
   onToggleReturnStatus: (emailId: string) => void;
+  onSaveReturns: () => Promise<number>;
+  isSaving: boolean;
 }
 
-export function ScannedEmailsPanel({ scannedEmails, lastScanStats, onToggleReturnStatus }: ScannedEmailsPanelProps) {
+export function ScannedEmailsPanel({ 
+  scannedEmails, 
+  lastScanStats, 
+  onToggleReturnStatus,
+  onSaveReturns,
+  isSaving,
+}: ScannedEmailsPanelProps) {
   if (scannedEmails.length === 0) {
     return null;
   }
@@ -33,20 +42,39 @@ export function ScannedEmailsPanel({ scannedEmails, lastScanStats, onToggleRetur
   return (
     <Card className="mt-6">
       <CardHeader>
-        <CardTitle className="text-lg">Last Scan Results</CardTitle>
-        <CardDescription>
-          {lastScanStats && (
-            <>
-              Searched {lastScanStats.scannedCount} emails, processed {lastScanStats.processedCount} in detail.
-              {' '}Found {returnsFound} confirmed returns
-              {returnRelatedNoVendor > 0 && `, ${returnRelatedNoVendor} return-related but unrecognized vendor`}
-              {userOverrideCount > 0 && ` (${userOverrideCount} manually adjusted)`}.
-            </>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <CardTitle className="text-lg">Last Scan Results</CardTitle>
+            <CardDescription>
+              {lastScanStats && (
+                <>
+                  Searched {lastScanStats.scannedCount} emails, processed {lastScanStats.processedCount} in detail.
+                  {' '}Found {returnsFound} confirmed returns
+                  {returnRelatedNoVendor > 0 && `, ${returnRelatedNoVendor} return-related but unrecognized vendor`}
+                  {userOverrideCount > 0 && ` (${userOverrideCount} manually adjusted)`}.
+                </>
+              )}
+              <span className="block mt-1 text-xs">
+                Toggle the switch to mark emails as return-related or not, then click Save to add them to your dashboard.
+              </span>
+            </CardDescription>
+          </div>
+          {returnsFound > 0 && (
+            <Button onClick={onSaveReturns} disabled={isSaving} className="shrink-0">
+              {isSaving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="mr-2 h-4 w-4" />
+                  Save {returnsFound} Return{returnsFound !== 1 ? 's' : ''}
+                </>
+              )}
+            </Button>
           )}
-          <span className="block mt-1 text-xs">
-            Toggle the switch to mark emails as return-related or not.
-          </span>
-        </CardDescription>
+        </div>
       </CardHeader>
       <CardContent>
         <ScrollArea className="h-[400px] pr-4">
