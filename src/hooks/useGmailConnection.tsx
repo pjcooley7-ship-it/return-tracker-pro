@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
+import { useQueryClient } from '@tanstack/react-query';
 
 interface GmailAccount {
   id: string;
@@ -32,12 +33,14 @@ export interface ScannedEmail {
 }
 
 export function useGmailConnection() {
-  const { session } = useAuth();
+  const { session, user } = useAuth();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [gmailAccount, setGmailAccount] = useState<GmailAccount | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [detectedReturns, setDetectedReturns] = useState<DetectedReturn[]>([]);
   const [scannedEmails, setScannedEmails] = useState<ScannedEmail[]>([]);
   const [lastScanStats, setLastScanStats] = useState<{ scannedCount: number; processedCount: number } | null>(null);
@@ -241,11 +244,105 @@ export function useGmailConnection() {
     );
   };
 
+  // Save detected returns to database
+  const saveDetectedReturns = async () => {
+    if (!user) {
+      toast({
+        title: 'Error',
+        description: 'Please sign in first',
+        variant: 'destructive',
+      });
+      return 0;
+    }
+
+    // Get returns that are marked as return-related and have a vendor
+    const returnsToSave = scannedEmails
+      .filter(email => email.isReturnRelated && email.detectedVendor)
+      .map(email => {
+        const detectedReturn = detectedReturns.find(r => r.emailId === email.emailId);
+        return {
+          email,
+          details: detectedReturn,
+        };
+      });
+
+    if (returnsToSave.length === 0) {
+      toast({
+        title: 'No returns to save',
+        description: 'No valid returns were detected. Adjust selections and try again.',
+      });
+      return 0;
+    }
+
+    setIsSaving(true);
+
+    try {
+      let savedCount = 0;
+
+      for (const item of returnsToSave) {
+        // Check if already exists by email ID
+        const { data: existing } = await supabase
+          .from('returns')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('source_email_id', item.email.emailId)
+          .maybeSingle();
+
+        if (existing) {
+          // Skip duplicates
+          continue;
+        }
+
+        const { error } = await supabase
+          .from('returns')
+          .insert({
+            user_id: user.id,
+            vendor_name: item.email.detectedVendor!,
+            order_number: item.details?.orderNumber || null,
+            expected_refund_amount: item.details?.amount || null,
+            currency: 'USD',
+            status: 'initiated',
+            return_initiated_at: item.details?.date ? new Date(item.details.date).toISOString() : new Date().toISOString(),
+            source_email_id: item.email.emailId,
+            items: item.email.subject ? [{ name: item.email.subject.substring(0, 100), quantity: 1 }] : [],
+            refund_threshold_days: 14,
+          });
+
+        if (!error) {
+          savedCount++;
+        } else {
+          console.error('Error saving return:', error);
+        }
+      }
+
+      // Invalidate returns query to refresh the dashboard
+      queryClient.invalidateQueries({ queryKey: ['returns'] });
+
+      toast({
+        title: 'Returns Saved',
+        description: `${savedCount} return${savedCount !== 1 ? 's' : ''} added to your dashboard.`,
+      });
+
+      return savedCount;
+    } catch (error) {
+      console.error('Error saving returns:', error);
+      toast({
+        title: 'Error',
+        description: 'Could not save returns. Please try again.',
+        variant: 'destructive',
+      });
+      return 0;
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return {
     gmailAccount,
     isLoading,
     isConnecting,
     isScanning,
+    isSaving,
     detectedReturns,
     scannedEmails,
     lastScanStats,
@@ -253,6 +350,7 @@ export function useGmailConnection() {
     disconnectGmail,
     scanEmails,
     toggleReturnStatus,
+    saveDetectedReturns,
     refetch: fetchGmailAccount,
   };
 }

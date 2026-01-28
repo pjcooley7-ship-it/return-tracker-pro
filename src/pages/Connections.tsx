@@ -31,12 +31,14 @@ export default function Connections() {
     isLoading,
     isConnecting,
     isScanning,
+    isSaving,
     scannedEmails,
     lastScanStats,
     connectGmail,
     disconnectGmail,
     scanEmails,
     toggleReturnStatus,
+    saveDetectedReturns,
     refetch,
   } = useGmailConnection();
 
@@ -226,7 +228,13 @@ export default function Connections() {
       </div>
 
       {/* Scanned Emails Results */}
-      <ScannedEmailsPanel scannedEmails={scannedEmails} lastScanStats={lastScanStats} onToggleReturnStatus={toggleReturnStatus} />
+      <ScannedEmailsPanel 
+        scannedEmails={scannedEmails} 
+        lastScanStats={lastScanStats} 
+        onToggleReturnStatus={toggleReturnStatus}
+        onSaveReturns={saveDetectedReturns}
+        isSaving={isSaving}
+      />
 
       <Card className="mt-6 bg-muted/50">
         <CardContent className="flex items-start gap-4 p-6">
