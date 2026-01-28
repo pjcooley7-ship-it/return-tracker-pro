@@ -260,16 +260,21 @@ const EXCLUDE_KEYWORDS = [
   "interview",
 ];
 
+interface GmailMessagePart {
+  partId?: string;
+  mimeType?: string;
+  filename?: string;
+  headers?: Array<{ name: string; value: string }>;
+  body?: { attachmentId?: string; data?: string; size?: number };
+  parts?: GmailMessagePart[];
+}
+
 interface GmailMessage {
   id: string;
   threadId: string;
   labelIds?: string[];
   snippet: string;
-  payload?: {
-    headers?: Array<{ name: string; value: string }>;
-    body?: { data?: string };
-    parts?: Array<{ body?: { data?: string }; mimeType?: string }>;
-  };
+  payload?: GmailMessagePart;
 }
 
 function decodeBase64Url(data: string): string {
@@ -279,6 +284,108 @@ function decodeBase64Url(data: string): string {
   } catch {
     return "";
   }
+}
+
+// Extract text content from PDF binary data
+function extractTextFromPdf(pdfData: Uint8Array): string {
+  // Simple PDF text extraction - looks for text streams
+  // This handles most simple return label PDFs
+  try {
+    const decoder = new TextDecoder("utf-8", { fatal: false });
+    const text = decoder.decode(pdfData);
+    
+    // Extract text between stream markers (simplified PDF parsing)
+    const textChunks: string[] = [];
+    
+    // Look for literal text in the PDF
+    const literalPattern = /\(([^)]+)\)/g;
+    let match;
+    while ((match = literalPattern.exec(text)) !== null) {
+      const chunk = match[1];
+      // Filter out binary garbage - keep only printable strings
+      if (chunk.length > 2 && /^[\x20-\x7E\s]+$/.test(chunk)) {
+        textChunks.push(chunk);
+      }
+    }
+    
+    // Also look for hex-encoded text
+    const hexPattern = /<([0-9A-Fa-f]+)>/g;
+    while ((match = hexPattern.exec(text)) !== null) {
+      const hex = match[1];
+      if (hex.length >= 4 && hex.length % 2 === 0) {
+        let decoded = "";
+        for (let i = 0; i < hex.length; i += 2) {
+          const charCode = parseInt(hex.substr(i, 2), 16);
+          if (charCode >= 32 && charCode <= 126) {
+            decoded += String.fromCharCode(charCode);
+          }
+        }
+        if (decoded.length > 2) {
+          textChunks.push(decoded);
+        }
+      }
+    }
+    
+    return textChunks.join(" ");
+  } catch (error) {
+    console.log("gmail-scan: PDF text extraction error", error);
+    return "";
+  }
+}
+
+// Fetch and extract text from PDF attachments
+async function extractPdfAttachmentText(
+  messageId: string,
+  attachmentId: string,
+  accessToken: string
+): Promise<string> {
+  try {
+    const attachmentUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachmentId}`;
+    const response = await fetch(attachmentUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    
+    if (!response.ok) {
+      console.log(`gmail-scan: Failed to fetch attachment ${attachmentId}`);
+      return "";
+    }
+    
+    const attachmentData = await response.json();
+    if (!attachmentData.data) return "";
+    
+    // Decode base64url to binary
+    const base64 = attachmentData.data.replace(/-/g, "+").replace(/_/g, "/");
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    return extractTextFromPdf(bytes);
+  } catch (error) {
+    console.log("gmail-scan: Error extracting PDF attachment", error);
+    return "";
+  }
+}
+
+// Find PDF attachments in message parts recursively
+function findPdfAttachments(part: GmailMessagePart): Array<{ filename: string; attachmentId: string }> {
+  const pdfs: Array<{ filename: string; attachmentId: string }> = [];
+  
+  if (part.mimeType === "application/pdf" && part.body?.attachmentId) {
+    pdfs.push({
+      filename: part.filename || "attachment.pdf",
+      attachmentId: part.body.attachmentId,
+    });
+  }
+  
+  if (part.parts) {
+    for (const subpart of part.parts) {
+      pdfs.push(...findPdfAttachments(subpart));
+    }
+  }
+  
+  return pdfs;
 }
 
 function extractHeader(headers: Array<{ name: string; value: string }> | undefined, name: string): string | null {
@@ -461,17 +568,91 @@ function extractAmount(text: string): number | null {
 }
 
 function extractTrackingNumber(text: string): { carrier: string; number: string } | null {
+  // Comprehensive tracking number patterns for global carriers
   const patterns = [
+    // === USA ===
     { carrier: "UPS", pattern: /\b(1Z[A-Z0-9]{16})\b/i },
-    { carrier: "FedEx", pattern: /\b([0-9]{12,22})\b/ },
+    { carrier: "FedEx", pattern: /\b((?:96\d{20}|[0-9]{12}|[0-9]{15}|[0-9]{20}|[0-9]{22}))\b/ },
     { carrier: "USPS", pattern: /\b(9[0-9]{15,21})\b/ },
     { carrier: "USPS", pattern: /\b([A-Z]{2}[0-9]{9}US)\b/i },
+    { carrier: "USPS", pattern: /\b((?:94|93|92|91)[0-9]{18,22})\b/ },
+    
+    // === INTERNATIONAL / EUROPE ===
+    // DHL (multiple formats)
+    { carrier: "DHL", pattern: /\b([0-9]{10,11})\b(?=.*(?:dhl|express|shipment))/i },
+    { carrier: "DHL", pattern: /\b(JD[0-9]{18})\b/i },
+    { carrier: "DHL", pattern: /\b([0-9]{3}[- ]?[0-9]{8}[- ]?[0-9]{1})\b/ },
+    { carrier: "DHL Express", pattern: /\b([0-9]{10})\b(?=.*dhl)/i },
+    
+    // DPD
+    { carrier: "DPD", pattern: /\b(0[0-9]{13})\b/ },
+    { carrier: "DPD", pattern: /\b([0-9]{14})\b(?=.*dpd)/i },
+    
+    // GLS
+    { carrier: "GLS", pattern: /\b([0-9]{11,12})\b(?=.*gls)/i },
+    { carrier: "GLS", pattern: /\b([A-Z]{2}[0-9]{9}[A-Z]{2})\b/i },
+    
+    // Hermes / Evri (UK)
+    { carrier: "Hermes", pattern: /\b([0-9]{16})\b(?=.*(?:hermes|evri))/i },
+    
+    // Royal Mail (UK)
+    { carrier: "Royal Mail", pattern: /\b([A-Z]{2}[0-9]{9}GB)\b/i },
+    
+    // === SWITZERLAND ===
+    // Swiss Post
+    { carrier: "Swiss Post", pattern: /\b(99\.[0-9]{2}\.[0-9]{6}\.[0-9]{8})\b/ },
+    { carrier: "Swiss Post", pattern: /\b([0-9]{18})\b(?=.*(?:swiss|post|poste))/i },
+    { carrier: "Swiss Post", pattern: /\b([A-Z]{2}[0-9]{9}CH)\b/i },
+    
+    // === GERMANY ===
+    // Deutsche Post / DHL Germany
+    { carrier: "Deutsche Post", pattern: /\b([A-Z]{2}[0-9]{9}DE)\b/i },
+    
+    // === FRANCE ===
+    // La Poste / Colissimo
+    { carrier: "La Poste", pattern: /\b([0-9]{11}[A-Z])\b/i },
+    { carrier: "Colissimo", pattern: /\b([A-Z]{2}[0-9]{9}FR)\b/i },
+    { carrier: "Chronopost", pattern: /\b([A-Z]{2}[0-9]{13})\b/i },
+    
+    // === NETHERLANDS ===
+    // PostNL
+    { carrier: "PostNL", pattern: /\b(3S[A-Z0-9]{12,14})\b/i },
+    { carrier: "PostNL", pattern: /\b([A-Z]{2}[0-9]{9}NL)\b/i },
+    
+    // === SPAIN ===
+    // Correos
+    { carrier: "Correos", pattern: /\b([A-Z]{2}[0-9]{9}ES)\b/i },
+    
+    // === ITALY ===
+    // Poste Italiane / SDA
+    { carrier: "Poste Italiane", pattern: /\b([A-Z]{2}[0-9]{9}IT)\b/i },
+    { carrier: "SDA", pattern: /\b([0-9]{12})\b(?=.*sda)/i },
+    
+    // === AUSTRIA ===
+    { carrier: "Austrian Post", pattern: /\b([A-Z]{2}[0-9]{9}AT)\b/i },
+    
+    // === CANADA ===
+    { carrier: "Canada Post", pattern: /\b([0-9]{16})\b(?=.*canada\s*post)/i },
+    { carrier: "Canada Post", pattern: /\b([A-Z]{2}[0-9]{9}CA)\b/i },
+    
+    // === AUSTRALIA ===
+    { carrier: "Australia Post", pattern: /\b([A-Z]{2}[0-9]{9}AU)\b/i },
+    
+    // === GENERIC INTERNATIONAL (EMS/Universal Postal Union) ===
+    { carrier: "EMS", pattern: /\b(E[A-Z][0-9]{9}[A-Z]{2})\b/i },
+    { carrier: "International", pattern: /\b([A-Z]{2}[0-9]{9}[A-Z]{2})\b/i },
   ];
 
   for (const { carrier, pattern } of patterns) {
     const match = text.match(pattern);
     if (match) {
-      return { carrier, number: match[1] };
+      // Clean up the tracking number
+      const trackingNum = match[1].replace(/[- ]/g, "").toUpperCase();
+      // Validate minimum length for generic numeric patterns
+      if (/^[0-9]+$/.test(trackingNum) && trackingNum.length < 10) {
+        continue; // Skip too-short numeric matches
+      }
+      return { carrier, number: trackingNum };
     }
   }
   return null;
@@ -684,7 +865,24 @@ Deno.serve(async (req) => {
         }
       }
 
-      let fullText = `${subject} ${body}`;
+      // Extract text from PDF attachments (return labels often contain tracking numbers)
+      let pdfText = "";
+      if (message.payload) {
+        const pdfAttachments = findPdfAttachments(message.payload);
+        if (pdfAttachments.length > 0) {
+          console.log(`gmail-scan: Found ${pdfAttachments.length} PDF attachment(s) in email ${msg.id}`);
+          // Process first 2 PDFs to avoid timeout
+          for (const pdf of pdfAttachments.slice(0, 2)) {
+            const extractedText = await extractPdfAttachmentText(msg.id, pdf.attachmentId, accessToken);
+            if (extractedText) {
+              pdfText += ` ${extractedText}`;
+              console.log(`gmail-scan: Extracted ${extractedText.length} chars from ${pdf.filename}`);
+            }
+          }
+        }
+      }
+
+      let fullText = `${subject} ${body} ${pdfText}`;
       
       // Detect language and translate if non-English
       const detectedLang = detectLanguage(fullText);
@@ -711,6 +909,7 @@ Deno.serve(async (req) => {
 
       // Build reason string
       let reason = "";
+      const hasPdfAttachment = pdfText.length > 0;
       if (isExcluded) {
         reason = "Excluded (tax/investment/non-retail context)";
       } else if (!isReturn) {
@@ -725,6 +924,9 @@ Deno.serve(async (req) => {
         reason = wasTranslated 
           ? `Detected as return (translated from ${detectedLang.toUpperCase()})` 
           : "Detected as return";
+        if (hasPdfAttachment) {
+          reason += " (PDF scanned)";
+        }
       }
 
       scannedEmails.push({
@@ -739,11 +941,22 @@ Deno.serve(async (req) => {
 
       if (!isReturn || isExcluded || !vendor) continue;
 
-      // Extract data from both original and translated text
+      // Extract data from both original and translated text (including PDF content)
       const textForExtraction = wasTranslated ? `${fullText} ${translatedText}` : fullText;
       const orderNumber = extractOrderNumber(textForExtraction);
       const amount = extractAmount(textForExtraction);
-      const tracking = extractTrackingNumber(textForExtraction);
+      
+      // Try to extract tracking from email body first, then from PDF
+      let tracking = extractTrackingNumber(body);
+      if (!tracking && pdfText) {
+        tracking = extractTrackingNumber(pdfText);
+        if (tracking) {
+          console.log(`gmail-scan: Found tracking ${tracking.carrier} ${tracking.number} in PDF`);
+        }
+      }
+      if (!tracking) {
+        tracking = extractTrackingNumber(textForExtraction);
+      }
 
       detectedReturns.push({
         vendor,
