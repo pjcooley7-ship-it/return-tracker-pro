@@ -1,0 +1,290 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+};
+
+const TRACKINGMORE_API_URL = 'https://api.trackingmore.com/v4';
+
+// Carrier code mapping for TrackingMore
+const carrierMapping: Record<string, string> = {
+  'ups': 'ups',
+  'fedex': 'fedex',
+  'usps': 'usps',
+  'dhl': 'dhl',
+  'dhl-express': 'dhl',
+  'amazon': 'amazon-fba-us',
+  'ontrac': 'ontrac',
+  'lasership': 'lasership',
+  'canada-post': 'canada-post',
+  'purolator': 'purolator',
+  'royal-mail': 'royal-mail',
+};
+
+// Map TrackingMore status to our tracking_status enum
+function mapStatus(trackingmoreStatus: string): string {
+  const statusMap: Record<string, string> = {
+    'pending': 'pre_transit',
+    'notfound': 'unknown',
+    'transit': 'in_transit',
+    'pickup': 'in_transit',
+    'undelivered': 'exception',
+    'delivered': 'delivered',
+    'expired': 'unknown',
+    'alert': 'exception',
+  };
+  return statusMap[trackingmoreStatus.toLowerCase()] || 'unknown';
+}
+
+serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders });
+  }
+
+  try {
+    const TRACKINGMORE_API_KEY = Deno.env.get('TRACKINGMORE_API_KEY');
+    if (!TRACKINGMORE_API_KEY) {
+      throw new Error('TRACKINGMORE_API_KEY is not configured');
+    }
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Get auth token from request
+    const authHeader = req.headers.get('authorization');
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'No authorization header' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Verify the user
+    const { data: { user }, error: authError } = await supabase.auth.getUser(
+      authHeader.replace('Bearer ', '')
+    );
+
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const { action, return_id, tracking_number, carrier } = await req.json();
+
+    if (action === 'create') {
+      // Create a new tracking entry
+      if (!return_id || !tracking_number || !carrier) {
+        return new Response(JSON.stringify({ error: 'Missing required fields: return_id, tracking_number, carrier' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Verify return belongs to user
+      const { data: returnData, error: returnError } = await supabase
+        .from('returns')
+        .select('id')
+        .eq('id', return_id)
+        .eq('user_id', user.id)
+        .single();
+
+      if (returnError || !returnData) {
+        return new Response(JSON.stringify({ error: 'Return not found or unauthorized' }), {
+          status: 404,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const carrierCode = carrierMapping[carrier.toLowerCase()] || carrier.toLowerCase();
+
+      // Create tracking in TrackingMore
+      console.log('Creating tracking in TrackingMore:', { tracking_number, carrier: carrierCode });
+      
+      const createResponse = await fetch(`${TRACKINGMORE_API_URL}/trackings/create`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Tracking-Api-Key': TRACKINGMORE_API_KEY,
+        },
+        body: JSON.stringify({
+          tracking_number,
+          courier_code: carrierCode,
+        }),
+      });
+
+      const createResult = await createResponse.json();
+      console.log('TrackingMore create response:', createResult);
+
+      // Even if tracking already exists, we proceed (code 4016)
+      if (createResult.meta?.code !== 200 && createResult.meta?.code !== 4016) {
+        console.error('TrackingMore API error:', createResult);
+        // Still create local tracking record
+      }
+
+      // Insert tracking record in our database
+      const { data: trackingData, error: trackingError } = await supabase
+        .from('tracking')
+        .insert({
+          return_id,
+          tracking_number,
+          carrier: carrier.toUpperCase(),
+          status: 'pre_transit',
+          tracking_history: [],
+        })
+        .select()
+        .single();
+
+      if (trackingError) {
+        console.error('Database insert error:', trackingError);
+        return new Response(JSON.stringify({ error: 'Failed to create tracking record' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Update return status to indicate tracking added
+      await supabase
+        .from('returns')
+        .update({ status: 'label_created' })
+        .eq('id', return_id)
+        .eq('status', 'initiated');
+
+      return new Response(JSON.stringify({ success: true, tracking: trackingData }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+
+    } else if (action === 'refresh') {
+      // Refresh tracking info
+      if (!tracking_number) {
+        return new Response(JSON.stringify({ error: 'Missing tracking_number' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Get current tracking record
+      const { data: trackingRecord, error: fetchError } = await supabase
+        .from('tracking')
+        .select('*, returns!inner(user_id)')
+        .eq('tracking_number', tracking_number)
+        .single();
+
+      if (fetchError || !trackingRecord) {
+        return new Response(JSON.stringify({ error: 'Tracking not found' }), {
+          status: 404,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Verify ownership
+      if ((trackingRecord.returns as any).user_id !== user.id) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const carrierCode = carrierMapping[trackingRecord.carrier.toLowerCase()] || trackingRecord.carrier.toLowerCase();
+
+      // Fetch latest tracking from TrackingMore
+      console.log('Fetching tracking from TrackingMore:', { tracking_number, carrier: carrierCode });
+      
+      const trackResponse = await fetch(
+        `${TRACKINGMORE_API_URL}/trackings/${carrierCode}/${tracking_number}`,
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Tracking-Api-Key': TRACKINGMORE_API_KEY,
+          },
+        }
+      );
+
+      const trackResult = await trackResponse.json();
+      console.log('TrackingMore response:', trackResult);
+
+      if (trackResult.meta?.code !== 200) {
+        console.error('TrackingMore fetch error:', trackResult);
+        return new Response(JSON.stringify({ 
+          success: false, 
+          error: trackResult.meta?.message || 'Failed to fetch tracking info',
+          tracking: trackingRecord 
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const trackingInfo = trackResult.data;
+      const newStatus = mapStatus(trackingInfo.delivery_status || 'unknown');
+      
+      // Build tracking history
+      const trackingHistory = (trackingInfo.origin_info?.trackinfo || []).map((event: any) => ({
+        timestamp: event.Date,
+        status: event.StatusDescription,
+        location: event.Details,
+        description: event.StatusDescription,
+      }));
+
+      // Update tracking record
+      const { data: updatedTracking, error: updateError } = await supabase
+        .from('tracking')
+        .update({
+          status: newStatus,
+          last_location: trackingInfo.latest_checkpoint_message || null,
+          estimated_delivery: trackingInfo.scheduled_delivery_date || null,
+          last_update: new Date().toISOString(),
+          tracking_history: trackingHistory,
+        })
+        .eq('id', trackingRecord.id)
+        .select()
+        .single();
+
+      if (updateError) {
+        console.error('Failed to update tracking:', updateError);
+      }
+
+      // If delivered, update return status
+      if (newStatus === 'delivered') {
+        await supabase
+          .from('returns')
+          .update({ 
+            status: 'delivered',
+            delivered_at: new Date().toISOString()
+          })
+          .eq('id', trackingRecord.return_id);
+      } else if (newStatus === 'in_transit') {
+        await supabase
+          .from('returns')
+          .update({ status: 'in_transit' })
+          .eq('id', trackingRecord.return_id)
+          .in('status', ['initiated', 'label_created']);
+      }
+
+      return new Response(JSON.stringify({ success: true, tracking: updatedTracking }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+
+    } else {
+      return new Response(JSON.stringify({ error: 'Invalid action' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+  } catch (error: unknown) {
+    console.error('Track shipment error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    return new Response(JSON.stringify({ error: errorMessage }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+});
