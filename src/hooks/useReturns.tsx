@@ -142,8 +142,9 @@ function calculateAvgRefundDays(returns: Return[]): number {
   if (refundedReturns.length === 0) return 0;
 
   const totalDays = refundedReturns.reduce((sum, r) => {
-    const delivered = new Date(r.delivered_at!);
-    const refunded = new Date(r.refund_received_at!);
+    // Safe: filter above guarantees both dates exist
+    const delivered = new Date(r.delivered_at as string);
+    const refunded = new Date(r.refund_received_at as string);
     const days = Math.ceil((refunded.getTime() - delivered.getTime()) / (1000 * 60 * 60 * 24));
     return sum + days;
   }, 0);

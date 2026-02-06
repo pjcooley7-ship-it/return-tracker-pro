@@ -1,6 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
 import { Check, X, AlertCircle, Save, Loader2 } from 'lucide-react';
@@ -11,7 +12,7 @@ export interface ScannedEmail {
   date: string;
   emailId: string;
   isReturnRelated: boolean;
-  userOverride?: boolean; // User manually toggled this
+  userOverride?: boolean;
   detectedVendor: string | null;
   reason: string;
 }
@@ -20,14 +21,16 @@ interface ScannedEmailsPanelProps {
   scannedEmails: ScannedEmail[];
   lastScanStats: { scannedCount: number; processedCount: number } | null;
   onToggleReturnStatus: (emailId: string) => void;
+  onSetEmailVendor: (emailId: string, vendorName: string) => void;
   onSaveReturns: () => Promise<number>;
   isSaving: boolean;
 }
 
-export function ScannedEmailsPanel({ 
-  scannedEmails, 
-  lastScanStats, 
+export function ScannedEmailsPanel({
+  scannedEmails,
+  lastScanStats,
   onToggleReturnStatus,
+  onSetEmailVendor,
   onSaveReturns,
   isSaving,
 }: ScannedEmailsPanelProps) {
@@ -35,9 +38,8 @@ export function ScannedEmailsPanel({
     return null;
   }
 
-  const returnsFound = scannedEmails.filter(e => e.isReturnRelated && e.detectedVendor).length;
-  const returnRelatedNoVendor = scannedEmails.filter(e => e.isReturnRelated && !e.detectedVendor).length;
-  const userOverrideCount = scannedEmails.filter(e => e.userOverride).length;
+  const saveable = scannedEmails.filter(e => e.isReturnRelated && e.detectedVendor);
+  const needsVendor = scannedEmails.filter(e => e.isReturnRelated && !e.detectedVendor);
 
   return (
     <Card className="mt-6">
@@ -49,17 +51,21 @@ export function ScannedEmailsPanel({
               {lastScanStats && (
                 <>
                   Searched {lastScanStats.scannedCount} emails, processed {lastScanStats.processedCount} in detail.
-                  {' '}Found {returnsFound} confirmed returns
-                  {returnRelatedNoVendor > 0 && `, ${returnRelatedNoVendor} return-related but unrecognized vendor`}
-                  {userOverrideCount > 0 && ` (${userOverrideCount} manually adjusted)`}.
+                  {' '}Found {saveable.length} saveable return{saveable.length !== 1 ? 's' : ''}
+                  {needsVendor.length > 0 && (
+                    <span className="text-warning font-medium">
+                      {' '}&mdash; {needsVendor.length} need a vendor name
+                    </span>
+                  )}
+                  .
                 </>
               )}
               <span className="block mt-1 text-xs">
-                Toggle the switch to mark emails as return-related or not, then click Save to add them to your dashboard.
+                Toggle the switch to mark emails as returns. Type a vendor name for unrecognized ones, then click Save.
               </span>
             </CardDescription>
           </div>
-          {returnsFound > 0 && (
+          {saveable.length > 0 && (
             <Button onClick={onSaveReturns} disabled={isSaving} className="shrink-0">
               {isSaving ? (
                 <>
@@ -69,7 +75,7 @@ export function ScannedEmailsPanel({
               ) : (
                 <>
                   <Save className="mr-2 h-4 w-4" />
-                  Save {returnsFound} Return{returnsFound !== 1 ? 's' : ''}
+                  Save {saveable.length} Return{saveable.length !== 1 ? 's' : ''}
                 </>
               )}
             </Button>
@@ -121,6 +127,16 @@ export function ScannedEmailsPanel({
                       {email.reason}
                     </span>
                   </div>
+                  {/* Inline vendor input for return-related emails with no detected vendor */}
+                  {email.isReturnRelated && !email.detectedVendor && (
+                    <div className="mt-2">
+                      <Input
+                        placeholder="Enter vendor name (e.g. Digitec, Zalando)"
+                        className="h-8 text-sm"
+                        onChange={(e) => onSetEmailVendor(email.emailId, e.target.value)}
+                      />
+                    </div>
+                  )}
                 </div>
                 <div className="flex flex-col items-end gap-1 shrink-0">
                   <Switch

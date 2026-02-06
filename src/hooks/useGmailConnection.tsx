@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
+import { logger } from '@/lib/logger';
 
 interface GmailAccount {
   id: string;
@@ -61,12 +62,12 @@ export function useGmailConnection() {
         .single();
 
       if (error && error.code !== 'PGRST116') {
-        console.error('Error fetching Gmail account:', error);
+        logger.error('Error fetching Gmail account', { source: 'useGmailConnection', metadata: { error } });
       }
       
       setGmailAccount(data);
     } catch (error) {
-      console.error('Error fetching Gmail account:', error);
+      logger.error('Error fetching Gmail account', { source: 'useGmailConnection', metadata: { error } });
     } finally {
       setIsLoading(false);
     }
@@ -116,7 +117,7 @@ export function useGmailConnection() {
         throw new Error('No auth URL returned');
       }
     } catch (error) {
-      console.error('Error connecting Gmail:', error);
+      logger.error('Error connecting Gmail', { source: 'useGmailConnection', metadata: { error } });
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       toast({
         title: 'Connection Failed',
@@ -146,7 +147,7 @@ export function useGmailConnection() {
         description: 'Gmail account has been disconnected.',
       });
     } catch (error) {
-      console.error('Error disconnecting Gmail:', error);
+      logger.error('Error disconnecting Gmail', { source: 'useGmailConnection', metadata: { error } });
       toast({
         title: 'Error',
         description: 'Could not disconnect Gmail. Please try again.',
@@ -214,7 +215,7 @@ export function useGmailConnection() {
       // Refresh account to get updated last_sync_at
       fetchGmailAccount();
     } catch (error) {
-      console.error('Error scanning emails:', error);
+      logger.error('Error scanning emails', { source: 'useGmailConnection', metadata: { error } });
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       toast({
         title: 'Scan Failed',
@@ -244,6 +245,17 @@ export function useGmailConnection() {
     );
   };
 
+  // Set vendor name for a scanned email (user-provided)
+  const setEmailVendor = (emailId: string, vendorName: string) => {
+    setScannedEmails((prev) =>
+      prev.map((email) =>
+        email.emailId === emailId
+          ? { ...email, detectedVendor: vendorName || null }
+          : email
+      )
+    );
+  };
+
   // Save detected returns to database
   const saveDetectedReturns = async () => {
     if (!user) {
@@ -255,7 +267,7 @@ export function useGmailConnection() {
       return 0;
     }
 
-    // Get returns that are marked as return-related and have a vendor
+    // Get returns that are marked as return-related AND have a vendor (detected or user-provided)
     const returnsToSave = scannedEmails
       .filter(email => email.isReturnRelated && email.detectedVendor)
       .map(email => {
@@ -266,10 +278,16 @@ export function useGmailConnection() {
         };
       });
 
+    const missingVendorCount = scannedEmails.filter(
+      email => email.isReturnRelated && !email.detectedVendor
+    ).length;
+
     if (returnsToSave.length === 0) {
       toast({
         title: 'No returns to save',
-        description: 'No valid returns were detected. Adjust selections and try again.',
+        description: missingVendorCount > 0
+          ? `${missingVendorCount} return${missingVendorCount !== 1 ? 's' : ''} need a vendor name before saving.`
+          : 'No valid returns were detected. Adjust selections and try again.',
       });
       return 0;
     }
@@ -297,7 +315,7 @@ export function useGmailConnection() {
           .from('returns')
           .insert({
             user_id: user.id,
-            vendor_name: item.email.detectedVendor!,
+            vendor_name: item.email.detectedVendor ?? 'Unknown',
             order_number: item.details?.orderNumber || null,
             expected_refund_amount: item.details?.amount || null,
             currency: 'USD',
@@ -311,7 +329,7 @@ export function useGmailConnection() {
         if (!error) {
           savedCount++;
         } else {
-          console.error('Error saving return:', error);
+          logger.error('Error saving return', { source: 'useGmailConnection', metadata: { error } });
         }
       }
 
@@ -325,7 +343,7 @@ export function useGmailConnection() {
 
       return savedCount;
     } catch (error) {
-      console.error('Error saving returns:', error);
+      logger.error('Error saving returns', { source: 'useGmailConnection', metadata: { error } });
       toast({
         title: 'Error',
         description: 'Could not save returns. Please try again.',
@@ -350,6 +368,7 @@ export function useGmailConnection() {
     disconnectGmail,
     scanEmails,
     toggleReturnStatus,
+    setEmailVendor,
     saveDetectedReturns,
     refetch: fetchGmailAccount,
   };

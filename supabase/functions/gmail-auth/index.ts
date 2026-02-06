@@ -3,6 +3,18 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+function structuredLog(severity: string, message: string, data?: Record<string, unknown>) {
+  const entry = JSON.stringify({
+    severity,
+    function: "gmail-auth",
+    message,
+    timestamp: new Date().toISOString(),
+    ...data,
+  });
+  if (severity === "ERROR") console.error(entry);
+  else console.log(entry);
+}
+
 Deno.serve(async (req) => {
   // Handle CORS preflight immediately
   if (req.method === "OPTIONS") {
@@ -85,7 +97,7 @@ Deno.serve(async (req) => {
       }
     );
   } catch (error) {
-    console.error("gmail-auth error:", error);
+    structuredLog("ERROR", "Unhandled error", { error: String(error) });
     return new Response(
       JSON.stringify({ error: "Internal server error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

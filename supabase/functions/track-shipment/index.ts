@@ -1,6 +1,18 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+function structuredLog(severity: string, message: string, data?: Record<string, unknown>) {
+  const entry = JSON.stringify({
+    severity,
+    function: "track-shipment",
+    message,
+    timestamp: new Date().toISOString(),
+    ...data,
+  });
+  if (severity === "ERROR") console.error(entry);
+  else console.log(entry);
+}
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
@@ -103,7 +115,7 @@ serve(async (req) => {
       const carrierCode = carrierMapping[carrier.toLowerCase()] || carrier.toLowerCase();
 
       // Create tracking in TrackingMore
-      console.log('Creating tracking in TrackingMore:', { tracking_number, carrier: carrierCode });
+      structuredLog("INFO", "Creating tracking in TrackingMore", { tracking_number, carrier: carrierCode });
       
       const createResponse = await fetch(`${TRACKINGMORE_API_URL}/trackings/create`, {
         method: 'POST',
@@ -118,11 +130,11 @@ serve(async (req) => {
       });
 
       const createResult = await createResponse.json();
-      console.log('TrackingMore create response:', createResult);
+      structuredLog("INFO", "TrackingMore create response", { code: createResult.meta?.code });
 
       // Even if tracking already exists, we proceed (code 4016)
       if (createResult.meta?.code !== 200 && createResult.meta?.code !== 4016) {
-        console.error('TrackingMore API error:', createResult);
+        structuredLog("ERROR", "TrackingMore API error", { result: createResult });
         // Still create local tracking record
       }
 
@@ -140,7 +152,7 @@ serve(async (req) => {
         .single();
 
       if (trackingError) {
-        console.error('Database insert error:', trackingError);
+        structuredLog("ERROR", "Database insert error", { error: String(trackingError) });
         return new Response(JSON.stringify({ error: 'Failed to create tracking record' }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -193,7 +205,7 @@ serve(async (req) => {
       const carrierCode = carrierMapping[trackingRecord.carrier.toLowerCase()] || trackingRecord.carrier.toLowerCase();
 
       // Fetch latest tracking from TrackingMore
-      console.log('Fetching tracking from TrackingMore:', { tracking_number, carrier: carrierCode });
+      structuredLog("INFO", "Fetching tracking from TrackingMore", { tracking_number, carrier: carrierCode });
       
       const trackResponse = await fetch(
         `${TRACKINGMORE_API_URL}/trackings/${carrierCode}/${tracking_number}`,
@@ -207,10 +219,10 @@ serve(async (req) => {
       );
 
       const trackResult = await trackResponse.json();
-      console.log('TrackingMore response:', trackResult);
+      structuredLog("INFO", "TrackingMore response", { code: trackResult.meta?.code });
 
       if (trackResult.meta?.code !== 200) {
-        console.error('TrackingMore fetch error:', trackResult);
+        structuredLog("ERROR", "TrackingMore fetch error", { result: trackResult });
         return new Response(JSON.stringify({ 
           success: false, 
           error: trackResult.meta?.message || 'Failed to fetch tracking info',
@@ -247,7 +259,7 @@ serve(async (req) => {
         .single();
 
       if (updateError) {
-        console.error('Failed to update tracking:', updateError);
+        structuredLog("ERROR", "Failed to update tracking", { error: String(updateError) });
       }
 
       // If delivered, update return status
@@ -280,7 +292,7 @@ serve(async (req) => {
     }
 
   } catch (error: unknown) {
-    console.error('Track shipment error:', error);
+    structuredLog("ERROR", "Unhandled error", { error: String(error) });
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return new Response(JSON.stringify({ error: errorMessage }), {
       status: 500,

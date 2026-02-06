@@ -3,6 +3,18 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+function structuredLog(severity: string, message: string, data?: Record<string, unknown>) {
+  const entry = JSON.stringify({
+    severity,
+    function: "gmail-scan",
+    message,
+    timestamp: new Date().toISOString(),
+    ...data,
+  });
+  if (severity === "ERROR") console.error(entry);
+  else console.log(entry);
+}
+
 // Common retail patterns for purchase/return emails (International)
 const VENDOR_PATTERNS = [
   // === GLOBAL MARKETPLACES ===
@@ -328,7 +340,7 @@ function extractTextFromPdf(pdfData: Uint8Array): string {
     
     return textChunks.join(" ");
   } catch (error) {
-    console.log("gmail-scan: PDF text extraction error", error);
+    structuredLog("WARN", "PDF text extraction error", { error: String(error) });
     return "";
   }
 }
@@ -346,7 +358,7 @@ async function extractPdfAttachmentText(
     });
     
     if (!response.ok) {
-      console.log(`gmail-scan: Failed to fetch attachment ${attachmentId}`);
+      structuredLog("WARN", "Failed to fetch attachment", { attachmentId });
       return "";
     }
     
@@ -363,7 +375,7 @@ async function extractPdfAttachmentText(
     
     return extractTextFromPdf(bytes);
   } catch (error) {
-    console.log("gmail-scan: Error extracting PDF attachment", error);
+    structuredLog("WARN", "Error extracting PDF attachment", { error: String(error) });
     return "";
   }
 }
@@ -388,18 +400,75 @@ function findPdfAttachments(part: GmailMessagePart): Array<{ filename: string; a
   return pdfs;
 }
 
+// Recursively extract text/plain body from nested multipart emails
+function extractBodyText(part: GmailMessagePart): string {
+  // Direct body data
+  if (part.mimeType === "text/plain" && part.body?.data) {
+    return decodeBase64Url(part.body.data);
+  }
+  // Recurse into sub-parts (multipart/alternative, multipart/mixed, etc.)
+  if (part.parts) {
+    // Prefer text/plain over text/html
+    for (const sub of part.parts) {
+      if (sub.mimeType === "text/plain" && sub.body?.data) {
+        return decodeBase64Url(sub.body.data);
+      }
+    }
+    // If no plain text, try HTML stripped or recurse deeper
+    for (const sub of part.parts) {
+      const result = extractBodyText(sub);
+      if (result) return result;
+    }
+  }
+  // Fallback: try HTML and strip tags
+  if (part.mimeType === "text/html" && part.body?.data) {
+    const html = decodeBase64Url(part.body.data);
+    return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
+  return "";
+}
+
 function extractHeader(headers: Array<{ name: string; value: string }> | undefined, name: string): string | null {
   return headers?.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value || null;
 }
 
-function detectVendor(from: string, subject: string): string | null {
-  const combined = `${from} ${subject}`;
+// Extract domain/name from email "From" header for vendor fallback
+function extractSenderVendor(from: string): string | null {
+  // Match email address in "Name <email@domain.com>" or "email@domain.com"
+  const emailMatch = from.match(/<([^>]+)>/) || from.match(/([^\s]+@[^\s]+)/);
+  if (emailMatch) {
+    const email = emailMatch[1].toLowerCase();
+    const domain = email.split("@")[1];
+    if (!domain) return null;
+    // Skip generic email providers
+    const genericDomains = [
+      "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com",
+      "mail.com", "aol.com", "protonmail.com", "gmx.com", "gmx.ch", "gmx.de",
+      "bluewin.ch", "sunrise.ch", "hispeed.ch",
+    ];
+    if (genericDomains.includes(domain)) return null;
+    // Use the second-level domain as vendor name, capitalized
+    const parts = domain.split(".");
+    const name = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  }
+  // Try extracting the display name portion
+  const nameMatch = from.match(/^"?([^"<]+)"?\s*</);
+  if (nameMatch) {
+    return nameMatch[1].trim();
+  }
+  return null;
+}
+
+function detectVendor(from: string, subject: string, body: string = ""): string | null {
+  const combined = `${from} ${subject} ${body}`;
   for (const vendor of VENDOR_PATTERNS) {
     if (vendor.pattern.test(combined)) {
       return vendor.name;
     }
   }
-  return null;
+  // Fallback: extract vendor from sender domain
+  return extractSenderVendor(from);
 }
 
 // Multilingual return keywords (English, German, French, Italian, Spanish, Dutch)
@@ -472,7 +541,7 @@ function detectLanguage(text: string): string {
 async function translateToEnglish(text: string, fromLang: string): Promise<string> {
   const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
   if (!lovableApiKey) {
-    console.log("gmail-scan: No LOVABLE_API_KEY, skipping translation");
+    structuredLog("INFO", "No LOVABLE_API_KEY, skipping translation");
     return text;
   }
   
@@ -500,14 +569,14 @@ async function translateToEnglish(text: string, fromLang: string): Promise<strin
     });
     
     if (!response.ok) {
-      console.log("gmail-scan: Translation failed", response.status);
+      structuredLog("WARN", "Translation failed", { status: response.status });
       return text;
     }
     
     const data = await response.json();
     return data.choices?.[0]?.message?.content || text;
   } catch (error) {
-    console.log("gmail-scan: Translation error", error);
+    structuredLog("WARN", "Translation error", { error: String(error) });
     return text;
   }
 }
@@ -679,7 +748,7 @@ Deno.serve(async (req) => {
       // No body or invalid JSON, use default
     }
     
-    console.log(`gmail-scan: Starting request with ${days} days range`);
+    structuredLog("INFO", "Starting request", { days });
     
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -700,7 +769,7 @@ Deno.serve(async (req) => {
     const { data: userData, error: userError } = await supabase.auth.getUser();
 
     if (userError || !userData?.user) {
-      console.log("gmail-scan: User verification failed", userError);
+      structuredLog("WARN", "User verification failed", { error: String(userError) });
       return new Response(
         JSON.stringify({ error: "Unauthorized" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -708,7 +777,7 @@ Deno.serve(async (req) => {
     }
 
     const userId = userData.user.id;
-    console.log(`gmail-scan: User verified: ${userId}`);
+    structuredLog("INFO", "User verified", { userId });
 
     // Get connected Gmail account
     const { data: account, error: accountError } = await supabase
@@ -720,21 +789,47 @@ Deno.serve(async (req) => {
       .single();
 
     if (accountError || !account) {
-      console.log("gmail-scan: No Gmail account found");
+      structuredLog("WARN", "No Gmail account found");
       return new Response(
         JSON.stringify({ error: "Gmail not connected" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    let accessToken = account.access_token_encrypted;
+    // Create a service_role client for decrypt/encrypt operations
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const serviceClient = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Decrypt access token
+    const { data: decryptedAccessToken, error: decryptAccessErr } = await serviceClient
+      .rpc("decrypt_token", { ciphertext: account.access_token_encrypted });
+    if (decryptAccessErr || !decryptedAccessToken) {
+      structuredLog("ERROR", "Failed to decrypt access token", { error: String(decryptAccessErr) });
+      return new Response(
+        JSON.stringify({ error: "Failed to decrypt token" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    let accessToken: string = decryptedAccessToken;
 
     // Check if token is expired and refresh if needed
     if (account.token_expires_at && new Date(account.token_expires_at) < new Date()) {
-      console.log("gmail-scan: Token expired, refreshing...");
+      structuredLog("INFO", "Token expired, refreshing");
 
       const clientId = Deno.env.get("GOOGLE_CLIENT_ID")!;
       const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
+
+      // Decrypt refresh token
+      const { data: decryptedRefreshToken, error: decryptRefreshErr } = await serviceClient
+        .rpc("decrypt_token", { ciphertext: account.refresh_token_encrypted });
+      if (decryptRefreshErr || !decryptedRefreshToken) {
+        structuredLog("ERROR", "Failed to decrypt refresh token", { error: String(decryptRefreshErr) });
+        return new Response(
+          JSON.stringify({ error: "Failed to decrypt refresh token" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
 
       const refreshResponse = await fetch("https://oauth2.googleapis.com/token", {
         method: "POST",
@@ -742,13 +837,13 @@ Deno.serve(async (req) => {
         body: new URLSearchParams({
           client_id: clientId,
           client_secret: clientSecret,
-          refresh_token: account.refresh_token_encrypted!,
+          refresh_token: decryptedRefreshToken,
           grant_type: "refresh_token",
         }),
       });
 
       if (!refreshResponse.ok) {
-        console.error("gmail-scan: Token refresh failed");
+        structuredLog("ERROR", "Token refresh failed");
         // Mark account as inactive
         await supabase
           .from("connected_accounts")
@@ -764,27 +859,51 @@ Deno.serve(async (req) => {
       const newTokens = await refreshResponse.json();
       accessToken = newTokens.access_token;
 
+      // Encrypt new access token before storing
+      const { data: encNewAccessToken, error: encErr } = await serviceClient
+        .rpc("encrypt_token", { plaintext: newTokens.access_token });
+      if (encErr) {
+        structuredLog("ERROR", "Failed to encrypt new access token", { error: String(encErr) });
+      }
+
       // Update tokens in database
       await supabase
         .from("connected_accounts")
         .update({
-          access_token_encrypted: accessToken,
+          access_token_encrypted: encNewAccessToken || newTokens.access_token,
           token_expires_at: new Date(Date.now() + newTokens.expires_in * 1000).toISOString(),
         })
         .eq("id", account.id);
     }
 
-    // Search for return-related emails with configurable time range
-    // Include multilingual terms in search query
+    // Search for return-related emails with configurable time range.
+    // No `subject:` prefix — searches full email (subject + body + attachments).
+    // Broad multilingual terms to catch German/French/Italian/Spanish/Dutch returns.
+    // Multi-word phrases are quoted for exact matching in Gmail search.
     const searchTerms = [
-      "return", "refund", "RMA", "rücksendung", "retoure", "retour", 
-      "rimborso", "reso", "devolución", "reembolso"
+      // English
+      '"return label"', '"return confirmation"', 'refund', 'RMA',
+      '"return authorized"', '"return shipment"', '"refund processed"',
+      '"money back"', '"return request"',
+      // German / Swiss-German
+      'rücksendung', 'retoure', 'retourenlabel', 'rücksendeetikett',
+      'rückerstattung', 'rückgabe', 'erstattung', 'umtausch',
+      'rücksendeschein', 'retourenformular',
+      // French
+      'remboursement', '"bon de retour"', '"retour confirmé"',
+      '"étiquette de retour"',
+      // Italian
+      'rimborso', '"reso confermato"', '"etichetta di reso"', 'restituzione',
+      // Spanish
+      '"devolución confirmada"', 'reembolso', '"etiqueta de devolución"',
+      // Dutch
+      '"retour bevestigd"', 'retourlabel', 'terugbetaling',
     ];
-    const query = `subject:(${searchTerms.join(" OR ")}) newer_than:${days}d`;
+    const query = `(${searchTerms.join(" OR ")}) newer_than:${days}d`;
     const maxResults = days > 90 ? 100 : 50; // More results for longer ranges
     const searchUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`;
 
-    console.log(`gmail-scan: Searching emails with query: ${query}`);
+    structuredLog("INFO", "Searching emails", { query });
     
     const searchResponse = await fetch(searchUrl, {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -792,7 +911,7 @@ Deno.serve(async (req) => {
 
     if (!searchResponse.ok) {
       const errorText = await searchResponse.text();
-      console.error("gmail-scan: Gmail search failed:", errorText);
+      structuredLog("ERROR", "Gmail search failed", { response: errorText });
       return new Response(
         JSON.stringify({ error: "Failed to search emails" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -802,7 +921,7 @@ Deno.serve(async (req) => {
     const searchData = await searchResponse.json();
     const messages = searchData.messages || [];
 
-    console.log(`gmail-scan: Found ${messages.length} potential return emails`);
+    structuredLog("INFO", "Found potential return emails", { count: messages.length });
 
     const detectedReturns: Array<{
       vendor: string;
@@ -852,17 +971,10 @@ Deno.serve(async (req) => {
       const from = extractHeader(headers, "From") || "";
       const date = extractHeader(headers, "Date") || "";
 
-      // Get email body
+      // Get email body — recursively search nested multipart structures
       let body = "";
-      if (message.payload?.body?.data) {
-        body = decodeBase64Url(message.payload.body.data);
-      } else if (message.payload?.parts) {
-        for (const part of message.payload.parts) {
-          if (part.mimeType === "text/plain" && part.body?.data) {
-            body = decodeBase64Url(part.body.data);
-            break;
-          }
-        }
+      if (message.payload) {
+        body = extractBodyText(message.payload);
       }
 
       // Extract text from PDF attachments (return labels often contain tracking numbers)
@@ -870,13 +982,13 @@ Deno.serve(async (req) => {
       if (message.payload) {
         const pdfAttachments = findPdfAttachments(message.payload);
         if (pdfAttachments.length > 0) {
-          console.log(`gmail-scan: Found ${pdfAttachments.length} PDF attachment(s) in email ${msg.id}`);
+          structuredLog("INFO", "Found PDF attachments", { count: pdfAttachments.length, emailId: msg.id });
           // Process first 2 PDFs to avoid timeout
           for (const pdf of pdfAttachments.slice(0, 2)) {
             const extractedText = await extractPdfAttachmentText(msg.id, pdf.attachmentId, accessToken);
             if (extractedText) {
               pdfText += ` ${extractedText}`;
-              console.log(`gmail-scan: Extracted ${extractedText.length} chars from ${pdf.filename}`);
+              structuredLog("INFO", "Extracted text from PDF", { chars: extractedText.length, filename: pdf.filename });
             }
           }
         }
@@ -890,22 +1002,26 @@ Deno.serve(async (req) => {
       let translatedText = fullText;
       
       if (detectedLang !== "en") {
-        console.log(`gmail-scan: Detected ${detectedLang} language, translating...`);
+        structuredLog("INFO", "Detected non-English language, translating", { language: detectedLang });
         translatedText = await translateToEnglish(fullText, detectedLang);
         wasTranslated = translatedText !== fullText;
       }
 
       // Check if this is return-related (and not a false positive like tax returns)
-      // Use both original and translated text for matching
+      // Check original text first, then translated text, then PDF content
       const { isRelated: returnRelated, isExcluded } = isReturnRelated(subject, body);
-      const { isRelated: returnRelatedTranslated } = wasTranslated 
-        ? isReturnRelated(translatedText, translatedText) 
+      const { isRelated: returnRelatedPdf } = pdfText
+        ? isReturnRelated("", pdfText)
         : { isRelated: false };
-      
-      const isReturn = returnRelated || returnRelatedTranslated;
-      
-      // Detect vendor from original text (vendor names are usually in original language)
-      const vendor = detectVendor(from, subject);
+      const { isRelated: returnRelatedTranslated } = wasTranslated
+        ? isReturnRelated(translatedText, translatedText)
+        : { isRelated: false };
+
+      const isReturn = returnRelated || returnRelatedPdf || returnRelatedTranslated;
+
+      // Detect vendor — check from/subject/body and translated text
+      const vendor = detectVendor(from, subject, body)
+        || (wasTranslated ? detectVendor(from, subject, translatedText) : null);
 
       // Build reason string
       let reason = "";
@@ -913,16 +1029,16 @@ Deno.serve(async (req) => {
       if (isExcluded) {
         reason = "Excluded (tax/investment/non-retail context)";
       } else if (!isReturn) {
-        reason = wasTranslated 
-          ? `No return keywords (translated from ${detectedLang.toUpperCase()})` 
+        reason = wasTranslated
+          ? `No return keywords (translated from ${detectedLang.toUpperCase()})`
           : "No return keywords found";
       } else if (!vendor) {
-        reason = wasTranslated 
-          ? `Return-related (${detectedLang.toUpperCase()}) but unknown vendor` 
-          : "Return-related but unknown vendor";
+        reason = wasTranslated
+          ? `Return-related (${detectedLang.toUpperCase()}) — enter vendor to save`
+          : "Return-related — enter vendor to save";
       } else {
-        reason = wasTranslated 
-          ? `Detected as return (translated from ${detectedLang.toUpperCase()})` 
+        reason = wasTranslated
+          ? `Detected as return (translated from ${detectedLang.toUpperCase()})`
           : "Detected as return";
         if (hasPdfAttachment) {
           reason += " (PDF scanned)";
@@ -939,19 +1055,19 @@ Deno.serve(async (req) => {
         reason,
       });
 
-      if (!isReturn || isExcluded || !vendor) continue;
+      if (!isReturn || isExcluded) continue;
 
       // Extract data from both original and translated text (including PDF content)
       const textForExtraction = wasTranslated ? `${fullText} ${translatedText}` : fullText;
       const orderNumber = extractOrderNumber(textForExtraction);
       const amount = extractAmount(textForExtraction);
-      
+
       // Try to extract tracking from email body first, then from PDF
       let tracking = extractTrackingNumber(body);
       if (!tracking && pdfText) {
         tracking = extractTrackingNumber(pdfText);
         if (tracking) {
-          console.log(`gmail-scan: Found tracking ${tracking.carrier} ${tracking.number} in PDF`);
+          structuredLog("INFO", "Found tracking in PDF", { carrier: tracking.carrier, number: tracking.number });
         }
       }
       if (!tracking) {
@@ -959,7 +1075,7 @@ Deno.serve(async (req) => {
       }
 
       detectedReturns.push({
-        vendor,
+        vendor: vendor || "Unknown",
         orderNumber,
         amount,
         subject,
@@ -975,7 +1091,7 @@ Deno.serve(async (req) => {
       .update({ last_sync_at: new Date().toISOString() })
       .eq("id", account.id);
 
-    console.log(`gmail-scan: Detected ${detectedReturns.length} returns from ${scannedEmails.length} emails`);
+    structuredLog("INFO", "Scan complete", { detectedReturns: detectedReturns.length, scannedEmails: scannedEmails.length });
 
     return new Response(
       JSON.stringify({
@@ -988,7 +1104,7 @@ Deno.serve(async (req) => {
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("gmail-scan: Error:", error);
+    structuredLog("ERROR", "Unhandled error", { error: String(error) });
     return new Response(
       JSON.stringify({ error: "Internal server error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

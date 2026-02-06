@@ -38,6 +38,7 @@ export default function Connections() {
     disconnectGmail,
     scanEmails,
     toggleReturnStatus,
+    setEmailVendor,
     saveDetectedReturns,
     refetch,
   } = useGmailConnection();
@@ -74,7 +75,7 @@ export default function Connections() {
     }
   }, [searchParams, setSearchParams, toast, refetch]);
 
-  const isGmailConnected = gmailAccount?.is_active;
+  const isGmailConnected = gmailAccount != null && gmailAccount.is_active === true;
 
   return (
     <DashboardLayout title="Connected Accounts">
@@ -228,10 +229,11 @@ export default function Connections() {
       </div>
 
       {/* Scanned Emails Results */}
-      <ScannedEmailsPanel 
-        scannedEmails={scannedEmails} 
-        lastScanStats={lastScanStats} 
+      <ScannedEmailsPanel
+        scannedEmails={scannedEmails}
+        lastScanStats={lastScanStats}
         onToggleReturnStatus={toggleReturnStatus}
+        onSetEmailVendor={setEmailVendor}
         onSaveReturns={saveDetectedReturns}
         isSaving={isSaving}
       />

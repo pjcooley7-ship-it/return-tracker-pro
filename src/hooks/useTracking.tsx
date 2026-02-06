@@ -26,7 +26,7 @@ export function useTracking() {
       });
 
       if (error) throw error;
-      if (data.error) throw new Error(data.error);
+      if (data?.error) throw new Error(data.error);
       return data;
     },
     onSuccess: () => {
@@ -62,7 +62,7 @@ export function useTracking() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['returns'] });
-      if (data.success) {
+      if (data?.success) {
         toast({
           title: 'Tracking updated',
           description: 'Latest tracking information has been fetched.',

@@ -1,5 +1,17 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+function structuredLog(severity: string, message: string, data?: Record<string, unknown>) {
+  const entry = JSON.stringify({
+    severity,
+    function: "gmail-callback",
+    message,
+    timestamp: new Date().toISOString(),
+    ...data,
+  });
+  if (severity === "ERROR") console.error(entry);
+  else console.log(entry);
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -21,12 +33,12 @@ Deno.serve(async (req) => {
     const appUrl = Deno.env.get("APP_URL") || "https://id-preview--9cd618c9-dc5b-4b50-b133-1e902eb0492d.lovable.app";
 
     if (error) {
-      console.error("OAuth error from Google:", error);
+      structuredLog("ERROR", "OAuth error from Google", { oauthError: error });
       return Response.redirect(`${appUrl}/connections?error=oauth_denied`, 302);
     }
 
     if (!code || !state) {
-      console.error("Missing code or state");
+      structuredLog("ERROR", "Missing code or state");
       return Response.redirect(`${appUrl}/connections?error=invalid_request`, 302);
     }
 
@@ -35,7 +47,7 @@ Deno.serve(async (req) => {
     try {
       stateData = JSON.parse(atob(state));
     } catch (e) {
-      console.error("Invalid state:", e);
+      structuredLog("ERROR", "Invalid state", { error: String(e) });
       return Response.redirect(`${appUrl}/connections?error=invalid_state`, 302);
     }
 
@@ -43,7 +55,7 @@ Deno.serve(async (req) => {
 
     // Check state timestamp (expires after 10 minutes)
     if (Date.now() - stateData.timestamp > 600000) {
-      console.error("State expired");
+      structuredLog("WARN", "State expired");
       return Response.redirect(`${appUrl}/connections?error=expired`, 302);
     }
 
@@ -67,12 +79,12 @@ Deno.serve(async (req) => {
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
-      console.error("Token exchange failed:", errorText);
+      structuredLog("ERROR", "Token exchange failed", { response: errorText });
       return Response.redirect(`${appUrl}/connections?error=token_exchange_failed`, 302);
     }
 
     const tokens = await tokenResponse.json();
-    console.log("Token exchange successful");
+    structuredLog("INFO", "Token exchange successful");
 
     // Get user email from Google
     const userInfoResponse = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
@@ -82,11 +94,30 @@ Deno.serve(async (req) => {
     const userInfo = await userInfoResponse.json();
     const email = userInfo.email;
 
-    console.log(`Got user info for: ${email}`);
+    structuredLog("INFO", "Got user info", { email });
 
     // Store tokens in database using service role
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Encrypt tokens before storing
+    const { data: encAccessToken, error: encAccessErr } = await supabase
+      .rpc("encrypt_token", { plaintext: tokens.access_token });
+    if (encAccessErr) {
+      structuredLog("ERROR", "Failed to encrypt access token", { error: String(encAccessErr) });
+      return Response.redirect(`${appUrl}/connections?error=internal_error`, 302);
+    }
+
+    let encRefreshToken: string | null = null;
+    if (tokens.refresh_token) {
+      const { data, error: encRefreshErr } = await supabase
+        .rpc("encrypt_token", { plaintext: tokens.refresh_token });
+      if (encRefreshErr) {
+        structuredLog("ERROR", "Failed to encrypt refresh token", { error: String(encRefreshErr) });
+        return Response.redirect(`${appUrl}/connections?error=internal_error`, 302);
+      }
+      encRefreshToken = data;
+    }
 
     // Check if account already exists
     const { data: existingAccount } = await supabase
@@ -100,8 +131,8 @@ Deno.serve(async (req) => {
       user_id: userId,
       account_type: "gmail",
       account_identifier: email,
-      access_token_encrypted: tokens.access_token, // In production, encrypt this
-      refresh_token_encrypted: tokens.refresh_token,
+      access_token_encrypted: encAccessToken,
+      refresh_token_encrypted: encRefreshToken,
       token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
       is_active: true,
       last_sync_at: null,
@@ -116,7 +147,7 @@ Deno.serve(async (req) => {
         .eq("id", existingAccount.id);
 
       if (updateError) {
-        console.error("Error updating account:", updateError);
+        structuredLog("ERROR", "Error updating account", { error: String(updateError) });
         return Response.redirect(`${appUrl}/connections?error=db_error`, 302);
       }
     } else {
@@ -126,17 +157,17 @@ Deno.serve(async (req) => {
         .insert(accountData);
 
       if (insertError) {
-        console.error("Error inserting account:", insertError);
+        structuredLog("ERROR", "Error inserting account", { error: String(insertError) });
         return Response.redirect(`${appUrl}/connections?error=db_error`, 302);
       }
     }
 
-    console.log(`Gmail account connected for user ${userId}`);
+    structuredLog("INFO", "Gmail account connected", { userId });
 
     // Redirect back to app with success
     return Response.redirect(`${appUrl}/connections?success=gmail_connected`, 302);
   } catch (error) {
-    console.error("Error in gmail-callback:", error);
+    structuredLog("ERROR", "Unhandled error", { error: String(error) });
     const appUrl = Deno.env.get("APP_URL") || "https://id-preview--9cd618c9-dc5b-4b50-b133-1e902eb0492d.lovable.app";
     return Response.redirect(`${appUrl}/connections?error=internal_error`, 302);
   }
