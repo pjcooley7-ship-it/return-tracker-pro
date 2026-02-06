@@ -75,7 +75,9 @@ export default function Connections() {
     }
   }, [searchParams, setSearchParams, toast, refetch]);
 
+  // Check if Gmail is connected AND active (token not expired)
   const isGmailConnected = gmailAccount != null && gmailAccount.is_active === true;
+  const isGmailExpired = gmailAccount != null && gmailAccount.is_active === false;
 
   return (
     <DashboardLayout title="Connected Accounts">
@@ -112,6 +114,11 @@ export default function Connections() {
                 <Badge variant="default" className="gap-1 bg-[hsl(var(--success))] text-[hsl(var(--success-foreground))]">
                   <Check className="h-3 w-3" />
                   Connected
+                </Badge>
+              ) : isGmailExpired ? (
+                <Badge variant="destructive" className="gap-1">
+                  <AlertCircle className="h-3 w-3" />
+                  Expired
                 </Badge>
               ) : (
                 <Badge variant="outline" className="gap-1">
@@ -172,6 +179,39 @@ export default function Connections() {
                       <X className="h-4 w-4" />
                     </Button>
                   </div>
+                </div>
+              </div>
+            ) : isGmailExpired ? (
+              <div className="space-y-4">
+                <div className="p-3 rounded-md bg-destructive/10 border border-destructive/20">
+                  <p className="text-sm text-destructive font-medium">Connection Expired</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Your Gmail authorization has expired. Please reconnect to continue scanning emails.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    className="flex-1"
+                    onClick={connectGmail}
+                    disabled={isConnecting}
+                  >
+                    {isConnecting ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Reconnecting...
+                      </>
+                    ) : (
+                      'Reconnect Gmail'
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={disconnectGmail}
+                    title="Remove connection"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
                 </div>
               </div>
             ) : (
