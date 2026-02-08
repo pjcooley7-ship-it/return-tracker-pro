@@ -957,7 +957,7 @@ Deno.serve(async (req) => {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 
-    // If Gmail returns 401, try refreshing the token once and retry
+    // Handle 401 (expired token) - try refreshing once
     if (searchResponse.status === 401) {
       structuredLog("INFO", "Gmail returned 401, attempting token refresh");
       const newToken = await refreshAccessToken();
@@ -978,6 +978,23 @@ Deno.serve(async (req) => {
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+    }
+
+    // Handle 403 (insufficient scopes) - user needs to reconnect with correct permissions
+    if (searchResponse.status === 403) {
+      const errorText = await searchResponse.text();
+      structuredLog("ERROR", "Gmail returned 403 - insufficient scopes", { response: errorText });
+      
+      // Mark account as inactive - needs reconnection with correct scopes
+      await supabase
+        .from("connected_accounts")
+        .update({ is_active: false })
+        .eq("id", account.id);
+
+      return new Response(
+        JSON.stringify({ error: "Gmail permissions insufficient. Please disconnect and reconnect Gmail to grant the required permissions." }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     if (!searchResponse.ok) {
