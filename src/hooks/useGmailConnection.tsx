@@ -197,13 +197,13 @@ export function useGmailConnection() {
     } catch (error) {
       logger.error('Error scanning emails', { source: 'useGmailConnection', metadata: { error } });
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      // Check if this is an expired connection error
-      if (errorMessage.includes('expired') || errorMessage.includes('reconnect')) {
+      // Check if this is an expired/permission connection error
+      if (errorMessage.includes('expired') || errorMessage.includes('reconnect') || errorMessage.includes('permissions')) {
         // Refresh account state to reflect inactive status
         await fetchGmailAccount();
       }
 
-      toast.error('Scan Failed', { description: `Could not scan emails: ${errorMessage}` });
+      toast.error('Scan Failed', { description: errorMessage });
     } finally {
     setIsScanning(false);
     }
