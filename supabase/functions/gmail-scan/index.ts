@@ -904,14 +904,85 @@ Deno.serve(async (req) => {
     const searchUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`;
 
     structuredLog("INFO", "Searching emails", { query });
-    
-    const searchResponse = await fetch(searchUrl, {
+
+    // Helper to refresh the access token
+    async function refreshAccessToken(): Promise<string | null> {
+      const clientId = Deno.env.get("GOOGLE_CLIENT_ID")!;
+      const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
+
+      const { data: decryptedRefreshToken, error: decryptRefreshErr } = await serviceClient
+        .rpc("decrypt_token", { ciphertext: account.refresh_token_encrypted });
+      if (decryptRefreshErr || !decryptedRefreshToken) {
+        structuredLog("ERROR", "Failed to decrypt refresh token for retry", { error: String(decryptRefreshErr) });
+        return null;
+      }
+
+      const refreshResponse = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          refresh_token: decryptedRefreshToken,
+          grant_type: "refresh_token",
+        }),
+      });
+
+      if (!refreshResponse.ok) {
+        structuredLog("ERROR", "Token refresh failed during retry", { status: refreshResponse.status });
+        return null;
+      }
+
+      const newTokens = await refreshResponse.json();
+
+      // Encrypt and store the new token
+      const { data: encNewAccessToken, error: encErr } = await serviceClient
+        .rpc("encrypt_token", { plaintext: newTokens.access_token });
+      if (encErr) {
+        structuredLog("ERROR", "Failed to encrypt new access token during retry", { error: String(encErr) });
+      }
+
+      await supabase
+        .from("connected_accounts")
+        .update({
+          access_token_encrypted: encNewAccessToken || newTokens.access_token,
+          token_expires_at: new Date(Date.now() + newTokens.expires_in * 1000).toISOString(),
+        })
+        .eq("id", account.id);
+
+      return newTokens.access_token;
+    }
+
+    let searchResponse = await fetch(searchUrl, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 
+    // If Gmail returns 401, try refreshing the token once and retry
+    if (searchResponse.status === 401) {
+      structuredLog("INFO", "Gmail returned 401, attempting token refresh");
+      const newToken = await refreshAccessToken();
+      if (newToken) {
+        accessToken = newToken;
+        searchResponse = await fetch(searchUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+      } else {
+        // Refresh failed — mark account as inactive
+        await supabase
+          .from("connected_accounts")
+          .update({ is_active: false })
+          .eq("id", account.id);
+
+        return new Response(
+          JSON.stringify({ error: "Gmail connection expired. Please reconnect." }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     if (!searchResponse.ok) {
       const errorText = await searchResponse.text();
-      structuredLog("ERROR", "Gmail search failed", { response: errorText });
+      structuredLog("ERROR", "Gmail search failed", { status: searchResponse.status, response: errorText });
       return new Response(
         JSON.stringify({ error: "Failed to search emails" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
