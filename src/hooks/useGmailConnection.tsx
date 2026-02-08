@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import { logger } from '@/lib/logger';
 
@@ -16,6 +16,7 @@ interface DetectedReturn {
   vendor: string;
   orderNumber: string | null;
   amount: number | null;
+  currency: string | null;
   subject: string;
   date: string;
   emailId: string;
@@ -35,7 +36,6 @@ export interface ScannedEmail {
 
 export function useGmailConnection() {
   const { session, user } = useAuth();
-  const { toast } = useToast();
   const queryClient = useQueryClient();
   const [gmailAccount, setGmailAccount] = useState<GmailAccount | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -64,7 +64,7 @@ export function useGmailConnection() {
       if (error && error.code !== 'PGRST116') {
         logger.error('Error fetching Gmail account', { source: 'useGmailConnection', metadata: { error } });
       }
-      
+
       setGmailAccount(data);
     } catch (error) {
       logger.error('Error fetching Gmail account', { source: 'useGmailConnection', metadata: { error } });
@@ -80,11 +80,7 @@ export function useGmailConnection() {
   // Connect Gmail - initiates OAuth flow
   const connectGmail = async () => {
     if (!session?.access_token) {
-      toast({
-        title: 'Error',
-        description: 'Please sign in first',
-        variant: 'destructive',
-      });
+      toast.error('Error', { description: 'Please sign in first' });
       return;
     }
 
@@ -119,11 +115,7 @@ export function useGmailConnection() {
     } catch (error) {
       logger.error('Error connecting Gmail', { source: 'useGmailConnection', metadata: { error } });
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      toast({
-        title: 'Connection Failed',
-        description: `Could not start Gmail connection: ${errorMessage}`,
-        variant: 'destructive',
-      });
+      toast.error('Connection Failed', { description: `Could not start Gmail connection: ${errorMessage}` });
     } finally {
       setIsConnecting(false);
     }
@@ -142,28 +134,17 @@ export function useGmailConnection() {
       if (error) throw error;
 
       setGmailAccount(null);
-      toast({
-        title: 'Disconnected',
-        description: 'Gmail account has been disconnected.',
-      });
+      toast.success('Disconnected', { description: 'Gmail account has been disconnected.' });
     } catch (error) {
       logger.error('Error disconnecting Gmail', { source: 'useGmailConnection', metadata: { error } });
-      toast({
-        title: 'Error',
-        description: 'Could not disconnect Gmail. Please try again.',
-        variant: 'destructive',
-      });
+      toast.error('Error', { description: 'Could not disconnect Gmail. Please try again.' });
     }
   };
 
   // Scan emails for returns
-  const scanEmails = async (scanRange: string = '30d') => {
+  const scanEmails = useCallback(async (scanRange: string = '30d') => {
     if (!session?.access_token || !gmailAccount?.is_active) {
-      toast({
-        title: 'Error',
-        description: 'Please connect Gmail first',
-        variant: 'destructive',
-      });
+      toast.error('Error', { description: 'Please connect Gmail first' });
       return;
     }
 
@@ -206,9 +187,8 @@ export function useGmailConnection() {
           processedCount: data.processedCount || 0,
         });
       }
-      
-      toast({
-        title: 'Scan Complete',
+
+      toast.success('Scan Complete', {
         description: `Found ${data.returns?.length || 0} potential returns in ${data.scannedCount || 0} emails.`,
       });
 
@@ -217,22 +197,17 @@ export function useGmailConnection() {
     } catch (error) {
       logger.error('Error scanning emails', { source: 'useGmailConnection', metadata: { error } });
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      
       // Check if this is an expired connection error
       if (errorMessage.includes('expired') || errorMessage.includes('reconnect')) {
         // Refresh account state to reflect inactive status
         await fetchGmailAccount();
       }
-      
-      toast({
-        title: 'Scan Failed',
-        description: `Could not scan emails: ${errorMessage}`,
-        variant: 'destructive',
-      });
+
+      toast.error('Scan Failed', { description: `Could not scan emails: ${errorMessage}` });
     } finally {
     setIsScanning(false);
     }
-  };
+  }, [session?.access_token, gmailAccount?.is_active, fetchGmailAccount]);
 
   // Toggle return status for a scanned email
   const toggleReturnStatus = (emailId: string) => {
@@ -266,11 +241,7 @@ export function useGmailConnection() {
   // Save detected returns to database
   const saveDetectedReturns = async () => {
     if (!user) {
-      toast({
-        title: 'Error',
-        description: 'Please sign in first',
-        variant: 'destructive',
-      });
+      toast.error('Error', { description: 'Please sign in first' });
       return 0;
     }
 
@@ -290,8 +261,7 @@ export function useGmailConnection() {
     ).length;
 
     if (returnsToSave.length === 0) {
-      toast({
-        title: 'No returns to save',
+      toast('No returns to save', {
         description: missingVendorCount > 0
           ? `${missingVendorCount} return${missingVendorCount !== 1 ? 's' : ''} need a vendor name before saving.`
           : 'No valid returns were detected. Adjust selections and try again.',
@@ -325,7 +295,7 @@ export function useGmailConnection() {
             vendor_name: item.email.detectedVendor ?? 'Unknown',
             order_number: item.details?.orderNumber || null,
             expected_refund_amount: item.details?.amount || null,
-            currency: 'USD',
+            currency: item.details?.currency || 'CHF',
             status: 'initiated',
             return_initiated_at: item.details?.date ? new Date(item.details.date).toISOString() : new Date().toISOString(),
             source_email_id: item.email.emailId,
@@ -343,19 +313,14 @@ export function useGmailConnection() {
       // Invalidate returns query to refresh the dashboard
       queryClient.invalidateQueries({ queryKey: ['returns'] });
 
-      toast({
-        title: 'Returns Saved',
+      toast.success('Returns Saved', {
         description: `${savedCount} return${savedCount !== 1 ? 's' : ''} added to your dashboard.`,
       });
 
       return savedCount;
     } catch (error) {
       logger.error('Error saving returns', { source: 'useGmailConnection', metadata: { error } });
-      toast({
-        title: 'Error',
-        description: 'Could not save returns. Please try again.',
-        variant: 'destructive',
-      });
+      toast.error('Error', { description: 'Could not save returns. Please try again.' });
       return 0;
     } finally {
       setIsSaving(false);

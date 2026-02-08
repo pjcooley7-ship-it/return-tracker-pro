@@ -602,19 +602,19 @@ function extractOrderNumber(text: string): string | null {
   return null;
 }
 
-function extractAmount(text: string): number | null {
-  // Support multiple currency formats
-  const patterns = [
-    /\$([0-9,]+\.?[0-9]*)/,           // USD
-    /€\s*([0-9.,]+)/,                  // EUR
-    /CHF\s*([0-9.']+)/i,               // Swiss Franc
-    /£([0-9,]+\.?[0-9]*)/,             // GBP
-    /([0-9.,]+)\s*€/,                  // EUR (suffix)
-    /([0-9.']+)\s*CHF/i,               // CHF (suffix)
+function extractAmount(text: string): { amount: number; currency: string } | null {
+  // Support multiple currency formats — each pattern maps to its currency
+  const patterns: Array<{ regex: RegExp; currency: string }> = [
+    { regex: /\$([0-9,]+\.?[0-9]*)/, currency: "USD" },
+    { regex: /€\s*([0-9.,]+)/, currency: "EUR" },
+    { regex: /CHF\s*([0-9.']+)/i, currency: "CHF" },
+    { regex: /£([0-9,]+\.?[0-9]*)/, currency: "GBP" },
+    { regex: /([0-9.,]+)\s*€/, currency: "EUR" },
+    { regex: /([0-9.']+)\s*CHF/i, currency: "CHF" },
   ];
-  
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
+
+  for (const { regex, currency } of patterns) {
+    const match = text.match(regex);
     if (match) {
       // Normalize number format (handle European comma as decimal)
       let numStr = match[1].replace(/'/g, "").replace(/\s/g, "");
@@ -630,7 +630,7 @@ function extractAmount(text: string): number | null {
           numStr = numStr.replace(/,/g, "");
         }
       }
-      return parseFloat(numStr);
+      return { amount: parseFloat(numStr), currency };
     }
   }
   return null;
@@ -923,18 +923,18 @@ Deno.serve(async (req) => {
 
     structuredLog("INFO", "Found potential return emails", { count: messages.length });
 
-    const detectedReturns: Array<{
+    interface DetectedReturnResult {
       vendor: string;
       orderNumber: string | null;
       amount: number | null;
+      currency: string | null;
       subject: string;
       date: string;
       emailId: string;
       tracking: { carrier: string; number: string } | null;
-    }> = [];
+    }
 
-    // Store all scanned emails for debugging
-    const scannedEmails: Array<{
+    interface ScannedEmailResult {
       subject: string;
       from: string;
       date: string;
@@ -942,27 +942,32 @@ Deno.serve(async (req) => {
       isReturnRelated: boolean;
       detectedVendor: string | null;
       reason: string;
-    }> = [];
+    }
 
-    // Process each message
-    for (const msg of messages.slice(0, 50)) {
-      // Process up to 50 emails for better coverage
-      const msgUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`;
+    interface ProcessEmailResult {
+      scannedEmail: ScannedEmailResult;
+      detectedReturn?: DetectedReturnResult;
+    }
+
+    // Process a single email message
+    async function processEmail(msgId: string, token: string): Promise<ProcessEmailResult> {
+      const msgUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}?format=full`;
       const msgResponse = await fetch(msgUrl, {
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       if (!msgResponse.ok) {
-        scannedEmails.push({
-          subject: "(failed to fetch)",
-          from: "",
-          date: "",
-          emailId: msg.id,
-          isReturnRelated: false,
-          detectedVendor: null,
-          reason: "Failed to fetch email details",
-        });
-        continue;
+        return {
+          scannedEmail: {
+            subject: "(failed to fetch)",
+            from: "",
+            date: "",
+            emailId: msgId,
+            isReturnRelated: false,
+            detectedVendor: null,
+            reason: "Failed to fetch email details",
+          },
+        };
       }
 
       const message: GmailMessage = await msgResponse.json();
@@ -977,30 +982,35 @@ Deno.serve(async (req) => {
         body = extractBodyText(message.payload);
       }
 
-      // Extract text from PDF attachments (return labels often contain tracking numbers)
+      // Extract text from PDF attachments in parallel (return labels often contain tracking numbers)
       let pdfText = "";
       if (message.payload) {
         const pdfAttachments = findPdfAttachments(message.payload);
         if (pdfAttachments.length > 0) {
-          structuredLog("INFO", "Found PDF attachments", { count: pdfAttachments.length, emailId: msg.id });
-          // Process first 2 PDFs to avoid timeout
-          for (const pdf of pdfAttachments.slice(0, 2)) {
-            const extractedText = await extractPdfAttachmentText(msg.id, pdf.attachmentId, accessToken);
-            if (extractedText) {
-              pdfText += ` ${extractedText}`;
-              structuredLog("INFO", "Extracted text from PDF", { chars: extractedText.length, filename: pdf.filename });
+          structuredLog("INFO", "Found PDF attachments", { count: pdfAttachments.length, emailId: msgId });
+          // Process first 2 PDFs in parallel
+          const pdfResults = await Promise.allSettled(
+            pdfAttachments.slice(0, 2).map(pdf =>
+              extractPdfAttachmentText(msgId, pdf.attachmentId, token)
+            )
+          );
+          for (let i = 0; i < pdfResults.length; i++) {
+            const result = pdfResults[i];
+            if (result.status === "fulfilled" && result.value) {
+              pdfText += ` ${result.value}`;
+              structuredLog("INFO", "Extracted text from PDF", { chars: result.value.length, filename: pdfAttachments[i].filename });
             }
           }
         }
       }
 
-      let fullText = `${subject} ${body} ${pdfText}`;
-      
+      const fullText = `${subject} ${body} ${pdfText}`;
+
       // Detect language and translate if non-English
       const detectedLang = detectLanguage(fullText);
       let wasTranslated = false;
       let translatedText = fullText;
-      
+
       if (detectedLang !== "en") {
         structuredLog("INFO", "Detected non-English language, translating", { language: detectedLang });
         translatedText = await translateToEnglish(fullText, detectedLang);
@@ -1008,7 +1018,6 @@ Deno.serve(async (req) => {
       }
 
       // Check if this is return-related (and not a false positive like tax returns)
-      // Check original text first, then translated text, then PDF content
       const { isRelated: returnRelated, isExcluded } = isReturnRelated(subject, body);
       const { isRelated: returnRelatedPdf } = pdfText
         ? isReturnRelated("", pdfText)
@@ -1045,22 +1054,24 @@ Deno.serve(async (req) => {
         }
       }
 
-      scannedEmails.push({
+      const scannedEmail: ScannedEmailResult = {
         subject,
         from,
         date,
-        emailId: msg.id,
+        emailId: msgId,
         isReturnRelated: isReturn && !isExcluded,
         detectedVendor: vendor,
         reason,
-      });
+      };
 
-      if (!isReturn || isExcluded) continue;
+      if (!isReturn || isExcluded) {
+        return { scannedEmail };
+      }
 
       // Extract data from both original and translated text (including PDF content)
       const textForExtraction = wasTranslated ? `${fullText} ${translatedText}` : fullText;
       const orderNumber = extractOrderNumber(textForExtraction);
-      const amount = extractAmount(textForExtraction);
+      const amountResult = extractAmount(textForExtraction);
 
       // Try to extract tracking from email body first, then from PDF
       let tracking = extractTrackingNumber(body);
@@ -1074,15 +1085,43 @@ Deno.serve(async (req) => {
         tracking = extractTrackingNumber(textForExtraction);
       }
 
-      detectedReturns.push({
-        vendor: vendor || "Unknown",
-        orderNumber,
-        amount,
-        subject,
-        date,
-        emailId: msg.id,
-        tracking,
-      });
+      return {
+        scannedEmail,
+        detectedReturn: {
+          vendor: vendor || "Unknown",
+          orderNumber,
+          amount: amountResult?.amount ?? null,
+          currency: amountResult?.currency ?? null,
+          subject,
+          date,
+          emailId: msgId,
+          tracking,
+        },
+      };
+    }
+
+    const detectedReturns: DetectedReturnResult[] = [];
+    const scannedEmails: ScannedEmailResult[] = [];
+
+    // Process emails in parallel batches of 10
+    const messagesToProcess = messages.slice(0, 50);
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < messagesToProcess.length; i += BATCH_SIZE) {
+      const batch = messagesToProcess.slice(i, i + BATCH_SIZE);
+      const results = await Promise.allSettled(
+        batch.map((msg: { id: string }) => processEmail(msg.id, accessToken))
+      );
+
+      for (const result of results) {
+        if (result.status === "fulfilled") {
+          scannedEmails.push(result.value.scannedEmail);
+          if (result.value.detectedReturn) {
+            detectedReturns.push(result.value.detectedReturn);
+          }
+        } else {
+          structuredLog("ERROR", "Email processing failed", { error: String(result.reason) });
+        }
+      }
     }
 
     // Update last sync time

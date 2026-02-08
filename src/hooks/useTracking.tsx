@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { toast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 
 interface CreateTrackingParams {
   return_id: string;
@@ -31,17 +31,10 @@ export function useTracking() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['returns'] });
-      toast({
-        title: 'Tracking added',
-        description: 'Your tracking number has been added and will be monitored.',
-      });
+      toast.success('Tracking added', { description: 'Your tracking number has been added and will be monitored.' });
     },
     onError: (error) => {
-      toast({
-        title: 'Failed to add tracking',
-        description: error.message,
-        variant: 'destructive',
-      });
+      toast.error('Failed to add tracking', { description: error.message });
     },
   });
 
@@ -63,18 +56,11 @@ export function useTracking() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['returns'] });
       if (data?.success) {
-        toast({
-          title: 'Tracking updated',
-          description: 'Latest tracking information has been fetched.',
-        });
+        toast.success('Tracking updated', { description: 'Latest tracking information has been fetched.' });
       }
     },
     onError: (error) => {
-      toast({
-        title: 'Failed to refresh tracking',
-        description: error.message,
-        variant: 'destructive',
-      });
+      toast.error('Failed to refresh tracking', { description: error.message });
     },
   });
 

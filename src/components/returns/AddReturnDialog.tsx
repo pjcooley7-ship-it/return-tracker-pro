@@ -30,13 +30,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useReturns } from '@/hooks/useReturns';
-import { toast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 
 const returnSchema = z.object({
   vendor_name: z.string().min(1, 'Vendor name is required').max(100),
   order_number: z.string().max(50).optional(),
   expected_refund_amount: z.string().optional(),
-  currency: z.string().default('USD'),
+  currency: z.string().default('CHF'),
   refund_threshold_days: z.string().default('14'),
   notes: z.string().max(500).optional(),
 });
@@ -59,7 +59,7 @@ export function AddReturnDialog({ children }: AddReturnDialogProps) {
       vendor_name: '',
       order_number: '',
       expected_refund_amount: '',
-      currency: 'USD',
+      currency: 'CHF',
       refund_threshold_days: '14',
       notes: '',
     },
@@ -91,20 +91,13 @@ export function AddReturnDialog({ children }: AddReturnDialogProps) {
         return_initiated_at: new Date().toISOString(),
       });
 
-      toast({
-        title: 'Return added',
-        description: 'Your return has been added successfully.',
-      });
+      toast.success('Return added', { description: 'Your return has been added successfully.' });
 
       setOpen(false);
       form.reset();
       setItems([]);
     } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to add return. Please try again.',
-        variant: 'destructive',
-      });
+      toast.error('Error', { description: 'Failed to add return. Please try again.' });
     }
   };
 
@@ -218,8 +211,9 @@ export function AddReturnDialog({ children }: AddReturnDialogProps) {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="USD">USD</SelectItem>
+                        <SelectItem value="CHF">CHF</SelectItem>
                         <SelectItem value="EUR">EUR</SelectItem>
+                        <SelectItem value="USD">USD</SelectItem>
                         <SelectItem value="GBP">GBP</SelectItem>
                         <SelectItem value="CAD">CAD</SelectItem>
                       </SelectContent>

@@ -41,7 +41,7 @@ supabase/
 - Supabase client from src/integrations/supabase/client.ts
 - Types defined in src/lib/types.ts and src/integrations/supabase/types.ts
 - Form validation with Zod schemas
-- Toast notifications via Sonner (preferred) — legacy Toaster also present
+- Toast notifications via Sonner (`import { toast } from 'sonner'`)
 
 ## When Reviewing Generated Code
 - Flag unused dependencies and dead code
@@ -60,8 +60,5 @@ supabase/
 - Test with Vitest — place tests in src/test/
 
 ## Known Issues (Tracked)
-- OAuth tokens stored unencrypted in connected_accounts table
-- TypeScript strict mode disabled (noImplicitAny, strictNullChecks are false)
 - Minimal test coverage (1 placeholder test)
 - Status config duplicated across ReturnCard, ReturnDetailsDialog, TrackingDetails
-- Dual toast systems (Sonner + Toaster) — migrate to Sonner only

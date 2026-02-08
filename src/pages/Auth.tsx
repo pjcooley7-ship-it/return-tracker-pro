@@ -17,7 +17,7 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { useAuth } from '@/hooks/useAuth';
-import { toast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 
 const authSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
@@ -54,54 +54,28 @@ export default function Auth() {
         const { error } = await signIn(data.email, data.password);
         if (error) {
           if (error.message.includes('Invalid login credentials')) {
-            toast({
-              title: 'Invalid credentials',
-              description: 'Please check your email and password and try again.',
-              variant: 'destructive',
-            });
+            toast.error('Invalid credentials', { description: 'Please check your email and password and try again.' });
           } else {
-            toast({
-              title: 'Sign in failed',
-              description: error.message,
-              variant: 'destructive',
-            });
+            toast.error('Sign in failed', { description: error.message });
           }
           return;
         }
-        toast({
-          title: 'Welcome back!',
-          description: 'You have successfully signed in.',
-        });
+        toast.success('Welcome back!', { description: 'You have successfully signed in.' });
       } else {
         const { error } = await signUp(data.email, data.password);
         if (error) {
           if (error.message.includes('User already registered')) {
-            toast({
-              title: 'Account exists',
-              description: 'An account with this email already exists. Please sign in instead.',
-              variant: 'destructive',
-            });
+            toast.error('Account exists', { description: 'An account with this email already exists. Please sign in instead.' });
             setActiveTab('signin');
           } else {
-            toast({
-              title: 'Sign up failed',
-              description: error.message,
-              variant: 'destructive',
-            });
+            toast.error('Sign up failed', { description: error.message });
           }
           return;
         }
-        toast({
-          title: 'Account created!',
-          description: 'Welcome to ReturnTracker. You are now signed in.',
-        });
+        toast.success('Account created!', { description: 'Welcome to ReturnTracker. You are now signed in.' });
       }
     } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'An unexpected error occurred. Please try again.',
-        variant: 'destructive',
-      });
+      toast.error('Error', { description: 'An unexpected error occurred. Please try again.' });
     } finally {
       setIsLoading(false);
     }

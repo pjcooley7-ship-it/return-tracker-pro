@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Mail, Building2, Check, AlertCircle, Loader2, RefreshCw, X } from 'lucide-react';
 import { useGmailConnection } from '@/hooks/useGmailConnection';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
 import { ScannedEmailsPanel } from '@/components/connections/ScannedEmailsPanel';
 
@@ -25,7 +25,7 @@ const SCAN_RANGE_OPTIONS: { value: ScanRange; label: string }[] = [
 export default function Connections() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [scanRange, setScanRange] = useState<ScanRange>('30d');
-  const { toast } = useToast();
+  const autoScannedRef = useRef(false);
   const {
     gmailAccount,
     isLoading,
@@ -49,10 +49,7 @@ export default function Connections() {
     const error = searchParams.get('error');
 
     if (success === 'gmail_connected') {
-      toast({
-        title: 'Gmail Connected!',
-        description: 'Your Gmail account has been successfully connected.',
-      });
+      toast.success('Gmail Connected!', { description: 'Your Gmail account has been successfully connected.' });
       refetch();
       setSearchParams({});
     } else if (error) {
@@ -66,18 +63,30 @@ export default function Connections() {
         internal_error: 'An unexpected error occurred. Please try again.',
       };
 
-      toast({
-        title: 'Connection Failed',
+      toast.error('Connection Failed', {
         description: errorMessages[error] || 'An error occurred. Please try again.',
-        variant: 'destructive',
       });
       setSearchParams({});
     }
-  }, [searchParams, setSearchParams, toast, refetch]);
+  }, [searchParams, setSearchParams, refetch]);
 
   // Check if Gmail is connected AND active (token not expired)
   const isGmailConnected = gmailAccount != null && gmailAccount.is_active === true;
   const isGmailExpired = gmailAccount != null && gmailAccount.is_active === false;
+
+  // Auto-scan on page load if Gmail connected and stale
+  useEffect(() => {
+    if (autoScannedRef.current) return;
+    if (!isGmailConnected || isLoading || isScanning) return;
+
+    const lastSync = gmailAccount.last_sync_at;
+    const isStale = !lastSync || (Date.now() - new Date(lastSync).getTime()) > 24 * 60 * 60 * 1000;
+
+    if (isStale) {
+      autoScannedRef.current = true;
+      scanEmails('30d');
+    }
+  }, [isGmailConnected, isLoading, isScanning, gmailAccount, scanEmails]);
 
   return (
     <DashboardLayout title="Connected Accounts">
@@ -286,7 +295,7 @@ export default function Connections() {
           <div>
             <h3 className="font-medium">Your data is secure</h3>
             <p className="text-sm text-muted-foreground mt-1">
-              We use industry-standard OAuth for email and Plaid for bank connections. 
+              We use industry-standard OAuth for email and Plaid for bank connections.
               We never store your passwords and you can disconnect anytime.
             </p>
           </div>

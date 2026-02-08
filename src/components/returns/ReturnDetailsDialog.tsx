@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils';
 import { AddTrackingDialog } from './AddTrackingDialog';
 import { TrackingDetails } from './TrackingDetails';
 import { useReturns } from '@/hooks/useReturns';
-import { toast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import type { Return } from '@/lib/types';
 
 interface ReturnDetailsDialogProps {
@@ -53,17 +53,10 @@ export function ReturnDetailsDialog({ returnItem, open, onOpenChange }: ReturnDe
     
     try {
       await deleteReturn.mutateAsync(returnItem.id);
-      toast({
-        title: 'Return deleted',
-        description: 'The return has been removed.',
-      });
+      toast.success('Return deleted', { description: 'The return has been removed.' });
       onOpenChange(false);
     } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to delete return.',
-        variant: 'destructive',
-      });
+      toast.error('Error', { description: 'Failed to delete return.' });
     }
   };
 
@@ -73,16 +66,9 @@ export function ReturnDetailsDialog({ returnItem, open, onOpenChange }: ReturnDe
         id: returnItem.id,
         status: 'awaiting_refund',
       });
-      toast({
-        title: 'Status updated',
-        description: 'Return marked as awaiting refund.',
-      });
+      toast.success('Status updated', { description: 'Return marked as awaiting refund.' });
     } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to update status.',
-        variant: 'destructive',
-      });
+      toast.error('Error', { description: 'Failed to update status.' });
     }
   };
 
@@ -93,16 +79,9 @@ export function ReturnDetailsDialog({ returnItem, open, onOpenChange }: ReturnDe
         status: 'refunded',
         refund_received_at: new Date().toISOString(),
       });
-      toast({
-        title: 'Status updated',
-        description: 'Return marked as refunded.',
-      });
+      toast.success('Status updated', { description: 'Return marked as refunded.' });
     } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to update status.',
-        variant: 'destructive',
-      });
+      toast.error('Error', { description: 'Failed to update status.' });
     }
   };
 
