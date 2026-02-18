@@ -1,6 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
 function structuredLog(severity: string, message: string, data?: Record<string, unknown>) {
   const entry = JSON.stringify({
     severity,
@@ -50,42 +47,70 @@ function mapStatus(trackingmoreStatus: string): string {
   return statusMap[trackingmoreStatus.toLowerCase()] || 'unknown';
 }
 
-serve(async (req) => {
+// Type for the join result of tracking + returns
+interface TrackingWithReturn {
+  id: string;
+  return_id: string;
+  tracking_number: string;
+  carrier: string;
+  status: string;
+  last_location: string | null;
+  estimated_delivery: string | null;
+  last_update: string | null;
+  tracking_history: unknown;
+  created_at: string;
+  updated_at: string;
+  returns: { user_id: string };
+}
+
+interface TrackingMoreEvent {
+  Date: string;
+  StatusDescription: string;
+  Details: string;
+}
+
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response(null, { headers: corsHeaders });
   }
 
   try {
+    // Lazy import to speed up cold start
+    const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.49.1");
+
     const TRACKINGMORE_API_KEY = Deno.env.get('TRACKINGMORE_API_KEY');
     if (!TRACKINGMORE_API_KEY) {
       throw new Error('TRACKINGMORE_API_KEY is not configured');
     }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
 
     // Get auth token from request
     const authHeader = req.headers.get('authorization');
-    if (!authHeader) {
+    if (!authHeader?.startsWith('Bearer ')) {
       return new Response(JSON.stringify({ error: 'No authorization header' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Verify the user
-    const { data: { user }, error: authError } = await supabase.auth.getUser(
-      authHeader.replace('Bearer ', '')
-    );
+    // Create user-scoped client using anon key + user's JWT (respects RLS)
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
 
-    if (authError || !user) {
+    // Verify the user
+    const { data: userData, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !userData?.user) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
+    const user = userData.user;
     const { action, return_id, tracking_number, carrier } = await req.json();
 
     if (action === 'create') {
@@ -97,7 +122,7 @@ serve(async (req) => {
         });
       }
 
-      // Verify return belongs to user
+      // Verify return belongs to user (RLS enforces this, but explicit check for clarity)
       const { data: returnData, error: returnError } = await supabase
         .from('returns')
         .select('id')
@@ -116,7 +141,7 @@ serve(async (req) => {
 
       // Create tracking in TrackingMore
       structuredLog("INFO", "Creating tracking in TrackingMore", { tracking_number, carrier: carrierCode });
-      
+
       const createResponse = await fetch(`${TRACKINGMORE_API_URL}/trackings/create`, {
         method: 'POST',
         headers: {
@@ -180,7 +205,7 @@ serve(async (req) => {
         });
       }
 
-      // Get current tracking record
+      // Get current tracking record with joined return (for ownership verification)
       const { data: trackingRecord, error: fetchError } = await supabase
         .from('tracking')
         .select('*, returns!inner(user_id)')
@@ -194,19 +219,22 @@ serve(async (req) => {
         });
       }
 
+      // Type the join result properly
+      const typedRecord = trackingRecord as unknown as TrackingWithReturn;
+
       // Verify ownership
-      if ((trackingRecord.returns as any).user_id !== user.id) {
+      if (typedRecord.returns.user_id !== user.id) {
         return new Response(JSON.stringify({ error: 'Unauthorized' }), {
           status: 401,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
-      const carrierCode = carrierMapping[trackingRecord.carrier.toLowerCase()] || trackingRecord.carrier.toLowerCase();
+      const carrierCode = carrierMapping[typedRecord.carrier.toLowerCase()] || typedRecord.carrier.toLowerCase();
 
       // Fetch latest tracking from TrackingMore
       structuredLog("INFO", "Fetching tracking from TrackingMore", { tracking_number, carrier: carrierCode });
-      
+
       const trackResponse = await fetch(
         `${TRACKINGMORE_API_URL}/trackings/${carrierCode}/${tracking_number}`,
         {
@@ -223,10 +251,10 @@ serve(async (req) => {
 
       if (trackResult.meta?.code !== 200) {
         structuredLog("ERROR", "TrackingMore fetch error", { result: trackResult });
-        return new Response(JSON.stringify({ 
-          success: false, 
+        return new Response(JSON.stringify({
+          success: false,
           error: trackResult.meta?.message || 'Failed to fetch tracking info',
-          tracking: trackingRecord 
+          tracking: trackingRecord
         }), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -235,9 +263,9 @@ serve(async (req) => {
 
       const trackingInfo = trackResult.data;
       const newStatus = mapStatus(trackingInfo.delivery_status || 'unknown');
-      
+
       // Build tracking history
-      const trackingHistory = (trackingInfo.origin_info?.trackinfo || []).map((event: any) => ({
+      const trackingHistory = (trackingInfo.origin_info?.trackinfo || []).map((event: TrackingMoreEvent) => ({
         timestamp: event.Date,
         status: event.StatusDescription,
         location: event.Details,
@@ -254,7 +282,7 @@ serve(async (req) => {
           last_update: new Date().toISOString(),
           tracking_history: trackingHistory,
         })
-        .eq('id', trackingRecord.id)
+        .eq('id', typedRecord.id)
         .select()
         .single();
 
@@ -266,16 +294,16 @@ serve(async (req) => {
       if (newStatus === 'delivered') {
         await supabase
           .from('returns')
-          .update({ 
+          .update({
             status: 'delivered',
             delivered_at: new Date().toISOString()
           })
-          .eq('id', trackingRecord.return_id);
+          .eq('id', typedRecord.return_id);
       } else if (newStatus === 'in_transit') {
         await supabase
           .from('returns')
           .update({ status: 'in_transit' })
-          .eq('id', trackingRecord.return_id)
+          .eq('id', typedRecord.return_id)
           .in('status', ['initiated', 'label_created']);
       }
 

@@ -1,5 +1,3 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
 function structuredLog(severity: string, message: string, data?: Record<string, unknown>) {
   const entry = JSON.stringify({
     severity,
@@ -10,6 +8,29 @@ function structuredLog(severity: string, message: string, data?: Record<string, 
   });
   if (severity === "ERROR") console.error(entry);
   else console.log(entry);
+}
+
+// Verify HMAC-SHA256 signature on a payload
+async function hmacVerify(payload: string, signature: string, secret: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const expected = await crypto.subtle.sign("HMAC", key, encoder.encode(payload));
+  const expectedHex = Array.from(new Uint8Array(expected))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  // Constant-time comparison to prevent timing attacks
+  if (expectedHex.length !== signature.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < expectedHex.length; i++) {
+    mismatch |= expectedHex.charCodeAt(i) ^ signature.charCodeAt(i);
+  }
+  return mismatch === 0;
 }
 
 const corsHeaders = {
@@ -24,6 +45,8 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.49.1");
+
     const url = new URL(req.url);
     const code = url.searchParams.get("code");
     const state = url.searchParams.get("state");
@@ -42,10 +65,30 @@ Deno.serve(async (req) => {
       return Response.redirect(`${appUrl}/connections?error=invalid_request`, 302);
     }
 
+    // Exchange code for tokens (need clientSecret early for HMAC verification)
+    const clientId = Deno.env.get("GOOGLE_CLIENT_ID")!;
+    const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
+
+    // Verify HMAC-signed state to prevent forgery
+    const dotIndex = state.lastIndexOf(".");
+    if (dotIndex === -1) {
+      structuredLog("ERROR", "State missing HMAC signature");
+      return Response.redirect(`${appUrl}/connections?error=invalid_state`, 302);
+    }
+
+    const statePayload = state.substring(0, dotIndex);
+    const stateSig = state.substring(dotIndex + 1);
+
+    const isValid = await hmacVerify(statePayload, stateSig, clientSecret);
+    if (!isValid) {
+      structuredLog("ERROR", "State HMAC verification failed");
+      return Response.redirect(`${appUrl}/connections?error=invalid_state`, 302);
+    }
+
     // Decode state to get user ID
     let stateData;
     try {
-      stateData = JSON.parse(atob(state));
+      stateData = JSON.parse(atob(statePayload));
     } catch (e) {
       structuredLog("ERROR", "Invalid state", { error: String(e) });
       return Response.redirect(`${appUrl}/connections?error=invalid_state`, 302);
@@ -58,10 +101,6 @@ Deno.serve(async (req) => {
       structuredLog("WARN", "State expired");
       return Response.redirect(`${appUrl}/connections?error=expired`, 302);
     }
-
-    // Exchange code for tokens
-    const clientId = Deno.env.get("GOOGLE_CLIENT_ID")!;
-    const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const redirectUri = `${supabaseUrl}/functions/v1/gmail-callback`;
 

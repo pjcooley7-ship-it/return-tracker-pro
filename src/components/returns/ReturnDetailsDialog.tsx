@@ -40,11 +40,11 @@ export function ReturnDetailsDialog({ returnItem, open, onOpenChange }: ReturnDe
 
   const config = statusConfig[returnItem.status];
 
-  const formatCurrency = (amount: number | undefined, currency: string) => {
-    if (!amount) return '—';
+  const formatCurrency = (amount: number | undefined, currency: string | null) => {
+    if (amount == null) return '—';
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency,
+      currency: currency || 'USD',
     }).format(amount);
   };
 

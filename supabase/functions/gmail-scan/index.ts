@@ -216,31 +216,6 @@ const VENDOR_PATTERNS = [
   { pattern: /sonos/i, name: "Sonos" },
 ];
 
-// Keywords for return-related emails (retail/e-commerce context)
-const RETURN_KEYWORDS = [
-  "return confirmation",
-  "return label",
-  "return authorized",
-  "rma",
-  "refund initiated",
-  "return shipment",
-  "return request",
-  "package return",
-  "your return",
-  "return merchandise",
-  "return your order",
-  "return your item",
-  "return instructions",
-  "drop off your return",
-  "print return label",
-  "schedule pickup",
-  "refund processed",
-  "refund complete",
-  "money back",
-  "credit issued",
-  "exchange request",
-];
-
 // Keywords that indicate NON-retail returns (false positives to exclude)
 const EXCLUDE_KEYWORDS = [
   "tax return",
@@ -862,15 +837,19 @@ Deno.serve(async (req) => {
       // Encrypt new access token before storing
       const { data: encNewAccessToken, error: encErr } = await serviceClient
         .rpc("encrypt_token", { plaintext: newTokens.access_token });
-      if (encErr) {
+      if (encErr || !encNewAccessToken) {
         structuredLog("ERROR", "Failed to encrypt new access token", { error: String(encErr) });
+        return new Response(
+          JSON.stringify({ error: "Failed to encrypt refreshed token" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
 
       // Update tokens in database
       await supabase
         .from("connected_accounts")
         .update({
-          access_token_encrypted: encNewAccessToken || newTokens.access_token,
+          access_token_encrypted: encNewAccessToken,
           token_expires_at: new Date(Date.now() + newTokens.expires_in * 1000).toISOString(),
         })
         .eq("id", account.id);
@@ -938,14 +917,16 @@ Deno.serve(async (req) => {
       // Encrypt and store the new token
       const { data: encNewAccessToken, error: encErr } = await serviceClient
         .rpc("encrypt_token", { plaintext: newTokens.access_token });
-      if (encErr) {
+      if (encErr || !encNewAccessToken) {
         structuredLog("ERROR", "Failed to encrypt new access token during retry", { error: String(encErr) });
+        // Do not store unencrypted token; return null to signal failure
+        return null;
       }
 
       await supabase
         .from("connected_accounts")
         .update({
-          access_token_encrypted: encNewAccessToken || newTokens.access_token,
+          access_token_encrypted: encNewAccessToken,
           token_expires_at: new Date(Date.now() + newTokens.expires_in * 1000).toISOString(),
         })
         .eq("id", account.id);

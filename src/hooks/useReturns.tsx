@@ -42,12 +42,13 @@ export function useReturns() {
   const createReturn = useMutation({
     mutationFn: async (returnData: Partial<Return>) => {
       if (!user) throw new Error('Not authenticated');
-      
+      if (!returnData.vendor_name) throw new Error('Vendor name is required');
+
       const { data, error } = await supabase
         .from('returns')
         .insert({
           user_id: user.id,
-          vendor_name: returnData.vendor_name!,
+          vendor_name: returnData.vendor_name,
           order_number: returnData.order_number,
           items: (returnData.items || []) as unknown as Json,
           expected_refund_amount: returnData.expected_refund_amount,

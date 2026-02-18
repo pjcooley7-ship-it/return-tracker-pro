@@ -36,16 +36,16 @@ export function ReturnCard({ returnItem, onClick }: ReturnCardProps) {
     }
   };
 
-  const formatCurrency = (amount: number | undefined, currency: string) => {
-    if (!amount) return '—';
+  const formatCurrency = (amount: number | undefined, currency: string | null) => {
+    if (amount == null) return '—';
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency,
+      currency: currency || 'USD',
     }).format(amount);
   };
 
   const getDaysUntilRefundDue = () => {
-    if (!returnItem.delivered_at) return null;
+    if (!returnItem.delivered_at || returnItem.refund_threshold_days == null) return null;
     const deliveredDate = new Date(returnItem.delivered_at);
     const dueDate = new Date(deliveredDate);
     dueDate.setDate(dueDate.getDate() + returnItem.refund_threshold_days);

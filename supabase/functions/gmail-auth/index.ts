@@ -15,6 +15,22 @@ function structuredLog(severity: string, message: string, data?: Record<string, 
   else console.log(entry);
 }
 
+// Sign a payload with HMAC-SHA256 using the given secret, returns hex string
+async function hmacSign(payload: string, secret: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(payload));
+  return Array.from(new Uint8Array(signature))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 Deno.serve(async (req) => {
   // Handle CORS preflight immediately
   if (req.method === "OPTIONS") {
@@ -24,9 +40,9 @@ Deno.serve(async (req) => {
   try {
     // Lazy import to speed up cold start
     const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.49.1");
-    
+
     const authHeader = req.headers.get("Authorization");
-    
+
     if (!authHeader?.startsWith("Bearer ")) {
       return new Response(
         JSON.stringify({ error: "Unauthorized" }),
@@ -36,14 +52,14 @@ Deno.serve(async (req) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-    
+
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
       global: { headers: { Authorization: authHeader } },
     });
 
     // Verify the user
     const { data: userData, error: userError } = await supabase.auth.getUser();
-    
+
     if (userError || !userData?.user) {
       return new Response(
         JSON.stringify({ error: "Unauthorized" }),
@@ -56,8 +72,9 @@ Deno.serve(async (req) => {
 
     // Get Google OAuth credentials
     const clientId = Deno.env.get("GOOGLE_CLIENT_ID");
-    
-    if (!clientId) {
+    const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET");
+
+    if (!clientId || !clientSecret) {
       return new Response(
         JSON.stringify({ error: "OAuth not configured" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -66,8 +83,10 @@ Deno.serve(async (req) => {
 
     const redirectUri = `${supabaseUrl}/functions/v1/gmail-callback`;
 
-    // Generate state with user ID for security
-    const state = btoa(JSON.stringify({ userId, timestamp: Date.now() }));
+    // Generate HMAC-signed state to prevent forgery
+    const statePayload = btoa(JSON.stringify({ userId, timestamp: Date.now() }));
+    const stateSig = await hmacSign(statePayload, clientSecret);
+    const state = `${statePayload}.${stateSig}`;
 
     // Build Google OAuth URL
     const scopes = [
@@ -91,9 +110,9 @@ Deno.serve(async (req) => {
 
     return new Response(
       JSON.stringify({ authUrl: authUrl.toString() }),
-      { 
-        status: 200, 
-        headers: { ...corsHeaders, "Content-Type": "application/json" } 
+      {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
       }
     );
   } catch (error) {

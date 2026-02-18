@@ -29,14 +29,14 @@ export interface Return {
   order_number?: string;
   items: ReturnItem[];
   expected_refund_amount?: number;
-  currency: string;
+  currency: string | null;
   status: ReturnStatus;
   return_initiated_at?: string;
   label_created_at?: string;
   shipped_at?: string;
   delivered_at?: string;
   refund_received_at?: string;
-  refund_threshold_days: number;
+  refund_threshold_days: number | null;
   source_email_id?: string;
   notes?: string;
   created_at: string;
