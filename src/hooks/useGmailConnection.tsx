@@ -77,46 +77,92 @@ export function useGmailConnection() {
     fetchGmailAccount();
   }, [fetchGmailAccount]);
 
-  // Connect Gmail - initiates OAuth flow
-  const connectGmail = async () => {
-    if (!session?.access_token) {
-      toast.error('Error', { description: 'Please sign in first' });
+  // Save Google provider tokens into connected_accounts after OAuth completes
+  const saveGmailTokens = useCallback(async (accessToken: string, refreshToken: string | null, userId: string) => {
+    let gmailEmail: string | null = null;
+    try {
+      const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (res.ok) {
+        const info = await res.json();
+        gmailEmail = info.email ?? null;
+      }
+    } catch { /* ignore — email is optional */ }
+
+    const accountData = {
+      user_id: userId,
+      account_type: 'gmail',
+      account_identifier: gmailEmail,
+      access_token_encrypted: accessToken,
+      refresh_token_encrypted: refreshToken,
+      token_expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+      is_active: true,
+      last_sync_at: null,
+      metadata: {},
+    };
+
+    const { data: existing } = await supabase
+      .from('connected_accounts')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('account_type', 'gmail')
+      .single();
+
+    const { error } = existing
+      ? await supabase.from('connected_accounts').update(accountData).eq('id', existing.id)
+      : await supabase.from('connected_accounts').insert(accountData);
+
+    if (error) {
+      logger.error('Error saving Gmail tokens', { source: 'useGmailConnection', metadata: { error } });
+      toast.error('Connection Failed', { description: 'Could not save Gmail connection. Please try again.' });
       return;
     }
 
-    setIsConnecting(true);
+    await fetchGmailAccount();
+    toast.success('Gmail Connected!', { description: `Connected${gmailEmail ? ` as ${gmailEmail}` : ''}.` });
+  }, [fetchGmailAccount]);
 
-    try {
-      // Use direct fetch to avoid Supabase client issues
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/gmail-auth`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`,
-            'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-          },
+  // Listen for the OAuth return — provider_token is only available in this callback
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, newSession) => {
+        if (event === 'USER_UPDATED' && newSession?.provider_token && newSession.user) {
+          await saveGmailTokens(
+            newSession.provider_token,
+            newSession.provider_refresh_token ?? null,
+            newSession.user.id,
+          );
         }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP ${response.status}`);
       }
+    );
+    return () => subscription.unsubscribe();
+  }, [saveGmailTokens]);
 
-      const data = await response.json();
-
-      if (data?.authUrl) {
-        window.location.href = data.authUrl;
-      } else {
-        throw new Error('No auth URL returned');
+  // Connect Gmail via Supabase built-in Google OAuth (uses auth/v1/callback)
+  const connectGmail = async () => {
+    setIsConnecting(true);
+    try {
+      const { error } = await supabase.auth.linkIdentity({
+        provider: 'google',
+        options: {
+          scopes: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/userinfo.email',
+          redirectTo: `${window.location.origin}/connections`,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent select_account',
+          },
+        },
+      });
+      if (error) {
+        toast.error('Connection Failed', { description: error.message });
+        setIsConnecting(false);
       }
-    } catch (error) {
-      logger.error('Error connecting Gmail', { source: 'useGmailConnection', metadata: { error } });
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      toast.error('Connection Failed', { description: `Could not start Gmail connection: ${errorMessage}` });
-    } finally {
+      // On success the browser redirects — onAuthStateChange handles the rest
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      logger.error('Error connecting Gmail', { source: 'useGmailConnection', metadata: { error: err } });
+      toast.error('Connection Failed', { description: msg });
       setIsConnecting(false);
     }
   };
