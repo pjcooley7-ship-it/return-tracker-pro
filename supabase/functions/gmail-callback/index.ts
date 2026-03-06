@@ -139,25 +139,6 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Encrypt tokens before storing
-    const { data: encAccessToken, error: encAccessErr } = await supabase
-      .rpc("encrypt_token", { plaintext: tokens.access_token });
-    if (encAccessErr) {
-      structuredLog("ERROR", "Failed to encrypt access token", { error: String(encAccessErr) });
-      return Response.redirect(`${appUrl}/connections?error=internal_error`, 302);
-    }
-
-    let encRefreshToken: string | null = null;
-    if (tokens.refresh_token) {
-      const { data, error: encRefreshErr } = await supabase
-        .rpc("encrypt_token", { plaintext: tokens.refresh_token });
-      if (encRefreshErr) {
-        structuredLog("ERROR", "Failed to encrypt refresh token", { error: String(encRefreshErr) });
-        return Response.redirect(`${appUrl}/connections?error=internal_error`, 302);
-      }
-      encRefreshToken = data;
-    }
-
     // Check if account already exists
     const { data: existingAccount } = await supabase
       .from("connected_accounts")
@@ -170,8 +151,8 @@ Deno.serve(async (req) => {
       user_id: userId,
       account_type: "gmail",
       account_identifier: email,
-      access_token_encrypted: encAccessToken,
-      refresh_token_encrypted: encRefreshToken,
+      access_token_encrypted: tokens.access_token,
+      refresh_token_encrypted: tokens.refresh_token ?? null,
       token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
       is_active: true,
       last_sync_at: null,

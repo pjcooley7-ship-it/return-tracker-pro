@@ -771,22 +771,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Create a service_role client for decrypt/encrypt operations
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const serviceClient = createClient(supabaseUrl, supabaseServiceKey);
-
-    // Decrypt access token
-    const { data: decryptedAccessToken, error: decryptAccessErr } = await serviceClient
-      .rpc("decrypt_token", { ciphertext: account.access_token_encrypted });
-    if (decryptAccessErr || !decryptedAccessToken) {
-      structuredLog("ERROR", "Failed to decrypt access token", { error: String(decryptAccessErr) });
-      return new Response(
-        JSON.stringify({ error: "Failed to decrypt token" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    let accessToken: string = decryptedAccessToken;
+    let accessToken: string = account.access_token_encrypted;
 
     // Check if token is expired and refresh if needed
     if (account.token_expires_at && new Date(account.token_expires_at) < new Date()) {
@@ -795,24 +780,13 @@ Deno.serve(async (req) => {
       const clientId = Deno.env.get("GOOGLE_CLIENT_ID")!;
       const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
 
-      // Decrypt refresh token
-      const { data: decryptedRefreshToken, error: decryptRefreshErr } = await serviceClient
-        .rpc("decrypt_token", { ciphertext: account.refresh_token_encrypted });
-      if (decryptRefreshErr || !decryptedRefreshToken) {
-        structuredLog("ERROR", "Failed to decrypt refresh token", { error: String(decryptRefreshErr) });
-        return new Response(
-          JSON.stringify({ error: "Failed to decrypt refresh token" }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
       const refreshResponse = await fetch("https://oauth2.googleapis.com/token", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
           client_id: clientId,
           client_secret: clientSecret,
-          refresh_token: decryptedRefreshToken,
+          refresh_token: account.refresh_token_encrypted,
           grant_type: "refresh_token",
         }),
       });
@@ -834,22 +808,11 @@ Deno.serve(async (req) => {
       const newTokens = await refreshResponse.json();
       accessToken = newTokens.access_token;
 
-      // Encrypt new access token before storing
-      const { data: encNewAccessToken, error: encErr } = await serviceClient
-        .rpc("encrypt_token", { plaintext: newTokens.access_token });
-      if (encErr || !encNewAccessToken) {
-        structuredLog("ERROR", "Failed to encrypt new access token", { error: String(encErr) });
-        return new Response(
-          JSON.stringify({ error: "Failed to encrypt refreshed token" }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      // Update tokens in database
+      // Update token in database
       await supabase
         .from("connected_accounts")
         .update({
-          access_token_encrypted: encNewAccessToken,
+          access_token_encrypted: newTokens.access_token,
           token_expires_at: new Date(Date.now() + newTokens.expires_in * 1000).toISOString(),
         })
         .eq("id", account.id);
@@ -889,20 +852,13 @@ Deno.serve(async (req) => {
       const clientId = Deno.env.get("GOOGLE_CLIENT_ID")!;
       const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
 
-      const { data: decryptedRefreshToken, error: decryptRefreshErr } = await serviceClient
-        .rpc("decrypt_token", { ciphertext: account.refresh_token_encrypted });
-      if (decryptRefreshErr || !decryptedRefreshToken) {
-        structuredLog("ERROR", "Failed to decrypt refresh token for retry", { error: String(decryptRefreshErr) });
-        return null;
-      }
-
       const refreshResponse = await fetch("https://oauth2.googleapis.com/token", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
           client_id: clientId,
           client_secret: clientSecret,
-          refresh_token: decryptedRefreshToken,
+          refresh_token: account.refresh_token_encrypted,
           grant_type: "refresh_token",
         }),
       });
@@ -914,19 +870,10 @@ Deno.serve(async (req) => {
 
       const newTokens = await refreshResponse.json();
 
-      // Encrypt and store the new token
-      const { data: encNewAccessToken, error: encErr } = await serviceClient
-        .rpc("encrypt_token", { plaintext: newTokens.access_token });
-      if (encErr || !encNewAccessToken) {
-        structuredLog("ERROR", "Failed to encrypt new access token during retry", { error: String(encErr) });
-        // Do not store unencrypted token; return null to signal failure
-        return null;
-      }
-
       await supabase
         .from("connected_accounts")
         .update({
-          access_token_encrypted: encNewAccessToken,
+          access_token_encrypted: newTokens.access_token,
           token_expires_at: new Date(Date.now() + newTokens.expires_in * 1000).toISOString(),
         })
         .eq("id", account.id);
