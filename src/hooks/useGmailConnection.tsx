@@ -139,30 +139,43 @@ export function useGmailConnection() {
     return () => subscription.unsubscribe();
   }, [saveGmailTokens]);
 
-  // Connect Gmail via Supabase built-in Google OAuth (uses auth/v1/callback)
+  // Connect Gmail via custom OAuth edge function
   const connectGmail = async () => {
+    if (!session?.access_token) {
+      toast.error('Error', { description: 'Please sign in first' });
+      return;
+    }
+
     setIsConnecting(true);
     try {
-      const { error } = await supabase.auth.linkIdentity({
-        provider: 'google',
-        options: {
-          scopes: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/userinfo.email',
-          redirectTo: `${window.location.origin}/connections`,
-          queryParams: {
-            access_type: 'offline',
-            prompt: 'consent select_account',
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/gmail-auth`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
           },
-        },
-      });
-      if (error) {
-        toast.error('Connection Failed', { description: error.message });
-        setIsConnecting(false);
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${response.status}`);
       }
-      // On success the browser redirects — onAuthStateChange handles the rest
+
+      const data = await response.json();
+      if (data?.authUrl) {
+        window.location.href = data.authUrl;
+      } else {
+        throw new Error('No auth URL returned');
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
       logger.error('Error connecting Gmail', { source: 'useGmailConnection', metadata: { error: err } });
       toast.error('Connection Failed', { description: msg });
+    } finally {
       setIsConnecting(false);
     }
   };
