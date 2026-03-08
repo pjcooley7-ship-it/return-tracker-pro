@@ -47,7 +47,7 @@ src/
   hooks/
     useAuth.tsx           → Auth context: user, session, signIn/signUp/signOut (79 lines)
     useReturns.tsx        → Returns CRUD queries/mutations + dashboard stats (153 lines)
-    useGmailConnection.tsx → Gmail OAuth, email scanning, return detection (347 lines) ⚠️
+    useGmailConnection.tsx → Gmail OAuth (linkIdentity), email scanning, return detection (~400 lines) ⚠️
     useTracking.tsx       → Shipment tracking query/mutation (71 lines)
     use-mobile.tsx        → Mobile breakpoint detection at 768px (19 lines)
   integrations/
@@ -75,9 +75,9 @@ src/
 supabase/
   config.toml             → Supabase project configuration
   functions/
-    gmail-auth/           → Generates Gmail OAuth consent URL (106 lines)
-    gmail-callback/       → Handles OAuth callback, encrypts tokens (174 lines)
-    gmail-scan/           → Scans Gmail for return-related emails (1240 lines)
+    gmail-auth/           → DEPRECATED — no longer called (replaced by linkIdentity)
+    gmail-callback/       → DEPRECATED — no longer called (replaced by linkIdentity)
+    gmail-scan/           → Scans Gmail for return-related emails (~1140 lines)
     track-shipment/       → Fetches carrier tracking status (302 lines)
   migrations/             → Database schema migrations (3 files)
 ```
@@ -211,7 +211,7 @@ npm run test:watch   # Run Vitest in watch mode
 
 - Never expose API keys or secrets in client code
 - Use `VITE_` prefix only for client-safe environment variables
-- Encrypt tokens before storing in the database (see `gmail-callback`)
+- OAuth tokens stored as plaintext in `connected_accounts` (Vault encryption removed — PoC only)
 - Validate all user input server-side in edge functions
 - Use Supabase RLS — never bypass with service role on the client
 
