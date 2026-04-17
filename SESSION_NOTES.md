@@ -19,6 +19,8 @@ A web app for tracking online product returns from initiation to refund. Users c
 **In Progress / Recently Fixed:**
 - Gmail OAuth connection rewritten to use `supabase.auth.linkIdentity` (replaces broken custom edge function flow that produced Google 403 errors)
 - Token encryption removed (Supabase Vault not configured; tokens stored as plaintext in `connected_accounts`)
+- `logger.ts` now persists `warn/error/fatal` to `error_logs` Supabase table (fire-and-forget)
+- Shared status config extracted to `src/lib/statusConfig.ts`; duplicate configs removed from 3 components
 
 **Blocked / Not Yet Working:**
 - Gmail reconnect not yet tested end-to-end with new `linkIdentity` flow
@@ -38,13 +40,20 @@ A web app for tracking online product returns from initiation to refund. Users c
 
 ## Todo
 
-- [ ] Test Gmail reconnect end-to-end with new `linkIdentity` flow
+**Requires manual config (can't do in code):**
 - [ ] Configure Google in Supabase Auth Settings (enable provider, add credentials)
 - [ ] Add Supabase auth callback URL to Google Cloud Console authorized redirect URIs
+- [ ] Test Gmail reconnect end-to-end with new `linkIdentity` flow (blocked on above)
+
+**In-code work remaining:**
+- [ ] Increase test coverage — currently 1 placeholder test; add tests for `useReturns`, `useAuth`, key components
+- [ ] Implement Plaid integration for refund monitoring
+
+**Done:**
 - [x] Remove legacy `gmail-auth` and `gmail-callback` edge functions
 - [x] Complete toast migration cleanup: uninstall `@radix-ui/react-toast`, delete legacy toast files
-- [ ] Implement Plaid integration for refund monitoring
-- [ ] Increase test coverage beyond 1 placeholder test
+- [x] Extract shared status config to `src/lib/statusConfig.ts`
+- [x] Wire `logger.ts` to persist errors to `error_logs` Supabase table
 
 ## Session Log
 
@@ -64,14 +73,14 @@ A web app for tracking online product returns from initiation to refund. Users c
 - Parallelized email fetching: `processEmail()` extracted, `Promise.allSettled` batches of 10, PDF attachments in parallel
 - Consolidated toast to Sonner: migrated 6 files, deleted 4 legacy files, uninstalled `@radix-ui/react-toast`
 
-### 2026-04-17 (Session 3)
-- Extracted shared status config to `src/lib/statusConfig.ts` — `returnStatusConfig` and `trackingStatusConfig`; removed duplicate local configs from `ReturnCard`, `ReturnDetailsDialog`, `TrackingDetails`
-- Wired `logger.ts` to persist `warn/error/fatal` events to the `error_logs` Supabase table (fire-and-forget, swallows insert errors to prevent loops); `info` stays console-only
-
-### 2026-04-17 (Session 2)
-- Deleted deprecated `gmail-auth` and `gmail-callback` edge functions (replaced by `linkIdentity` flow)
-- Updated `connectGmail` in `useGmailConnection.tsx` to use `supabase.auth.linkIdentity` (the token-capture listener was already in place; only the initiator function was still calling the old edge function)
-- Confirmed toast/radix cleanup was already fully complete from 2026-02-08 session
+### 2026-04-17
+- Reviewed session notes; identified todo items and split into in-code vs. manual-config work
+- Deleted deprecated `gmail-auth` and `gmail-callback` edge functions (351 lines removed)
+- Completed `linkIdentity` migration: updated `connectGmail` in `useGmailConnection.tsx` to call `supabase.auth.linkIdentity` — the token-capture `onAuthStateChange` listener was already in place from 2026-03-08 but the initiator was still calling the old edge function
+- Confirmed toast/radix cleanup was fully complete from 2026-02-08 session
+- Extracted shared status config to `src/lib/statusConfig.ts` (`returnStatusConfig`, `trackingStatusConfig`); removed duplicate local `statusConfig` objects from `ReturnCard`, `ReturnDetailsDialog`, and `TrackingDetails`
+- Wired `logger.ts` to persist `warn/error/fatal` events to the `error_logs` Supabase table (fire-and-forget; insert errors swallowed to prevent loops); `info` stays console-only
+- **Next**: configure Google provider in Supabase + Google Cloud Console, then test Gmail reconnect end-to-end; after that, test coverage and Plaid
 
 ### 2026-03-08
 - Diagnosed "Failed to decrypt token" error: Supabase Vault migration was never applied to remote DB
