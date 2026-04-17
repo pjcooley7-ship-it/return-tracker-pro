@@ -41,8 +41,8 @@ A web app for tracking online product returns from initiation to refund. Users c
 - [ ] Test Gmail reconnect end-to-end with new `linkIdentity` flow
 - [ ] Configure Google in Supabase Auth Settings (enable provider, add credentials)
 - [ ] Add Supabase auth callback URL to Google Cloud Console authorized redirect URIs
-- [ ] Remove legacy `gmail-auth` and `gmail-callback` edge functions (currently unused but harmless)
-- [ ] Complete toast migration cleanup: uninstall `@radix-ui/react-toast`, delete `src/hooks/use-toast.ts`, `src/components/ui/toast.tsx`, `src/components/ui/toaster.tsx`, `src/components/ui/use-toast.ts`
+- [x] Remove legacy `gmail-auth` and `gmail-callback` edge functions
+- [x] Complete toast migration cleanup: uninstall `@radix-ui/react-toast`, delete legacy toast files
 - [ ] Implement Plaid integration for refund monitoring
 - [ ] Increase test coverage beyond 1 placeholder test
 
@@ -63,6 +63,11 @@ A web app for tracking online product returns from initiation to refund. Users c
 - Fixed hardcoded USD: `extractAmount` now returns `{ amount, currency }`, CHF default
 - Parallelized email fetching: `processEmail()` extracted, `Promise.allSettled` batches of 10, PDF attachments in parallel
 - Consolidated toast to Sonner: migrated 6 files, deleted 4 legacy files, uninstalled `@radix-ui/react-toast`
+
+### 2026-04-17
+- Deleted deprecated `gmail-auth` and `gmail-callback` edge functions (replaced by `linkIdentity` flow)
+- Updated `connectGmail` in `useGmailConnection.tsx` to use `supabase.auth.linkIdentity` (the token-capture listener was already in place; only the initiator function was still calling the old edge function)
+- Confirmed toast/radix cleanup was already fully complete from 2026-02-08 session
 
 ### 2026-03-08
 - Diagnosed "Failed to decrypt token" error: Supabase Vault migration was never applied to remote DB
