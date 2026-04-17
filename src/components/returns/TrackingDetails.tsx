@@ -1,27 +1,19 @@
 import { format } from 'date-fns';
-import { RefreshCw, MapPin, Clock, Package, CheckCircle, AlertTriangle } from 'lucide-react';
+import { RefreshCw, MapPin, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { useTracking } from '@/hooks/useTracking';
+import { trackingStatusConfig } from '@/lib/statusConfig';
 import type { Tracking } from '@/lib/types';
 
 interface TrackingDetailsProps {
   tracking: Tracking;
 }
 
-const statusConfig = {
-  pre_transit: { label: 'Pre-Transit', icon: Package, color: 'bg-muted text-muted-foreground' },
-  in_transit: { label: 'In Transit', icon: Package, color: 'status-active' },
-  out_for_delivery: { label: 'Out for Delivery', icon: Package, color: 'status-active' },
-  delivered: { label: 'Delivered', icon: CheckCircle, color: 'status-completed' },
-  exception: { label: 'Exception', icon: AlertTriangle, color: 'status-disputed' },
-  unknown: { label: 'Unknown', icon: Package, color: 'bg-muted text-muted-foreground' },
-};
-
 export function TrackingDetails({ tracking }: TrackingDetailsProps) {
   const { refreshTracking } = useTracking();
-  const config = statusConfig[tracking.status];
+  const config = trackingStatusConfig[tracking.status];
   const StatusIcon = config.icon;
 
   return (

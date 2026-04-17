@@ -64,7 +64,11 @@ A web app for tracking online product returns from initiation to refund. Users c
 - Parallelized email fetching: `processEmail()` extracted, `Promise.allSettled` batches of 10, PDF attachments in parallel
 - Consolidated toast to Sonner: migrated 6 files, deleted 4 legacy files, uninstalled `@radix-ui/react-toast`
 
-### 2026-04-17
+### 2026-04-17 (Session 3)
+- Extracted shared status config to `src/lib/statusConfig.ts` — `returnStatusConfig` and `trackingStatusConfig`; removed duplicate local configs from `ReturnCard`, `ReturnDetailsDialog`, `TrackingDetails`
+- Wired `logger.ts` to persist `warn/error/fatal` events to the `error_logs` Supabase table (fire-and-forget, swallows insert errors to prevent loops); `info` stays console-only
+
+### 2026-04-17 (Session 2)
 - Deleted deprecated `gmail-auth` and `gmail-callback` edge functions (replaced by `linkIdentity` flow)
 - Updated `connectGmail` in `useGmailConnection.tsx` to use `supabase.auth.linkIdentity` (the token-capture listener was already in place; only the initiator function was still calling the old edge function)
 - Confirmed toast/radix cleanup was already fully complete from 2026-02-08 session
