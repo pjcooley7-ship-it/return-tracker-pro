@@ -35,6 +35,7 @@ A web app for tracking online product returns from initiation to refund. Users c
 - **CHF as default currency**: User is in Switzerland; emails often use CHF/EUR. Default changed from USD to CHF.
 - **Sonner only for toasts**: Migrated all legacy `use-toast` / Radix toast calls to `import { toast } from 'sonner'`. Legacy files deleted.
 - **strictNullChecks enabled**: All null safety issues fixed across hooks and client.
+- **Shared statusConfig**: Extracted duplicated status config objects into `src/lib/statusConfig.ts` with typed `returnStatusConfig` and `trackingStatusConfig`.
 
 ## Todo
 
@@ -43,8 +44,11 @@ A web app for tracking online product returns from initiation to refund. Users c
 - [ ] Add Supabase auth callback URL to Google Cloud Console authorized redirect URIs
 - [x] Remove legacy `gmail-auth` and `gmail-callback` edge functions
 - [x] Complete toast migration cleanup: uninstall `@radix-ui/react-toast`, delete legacy toast files
-- [ ] Implement Plaid integration for refund monitoring
+- [x] Extract duplicated `statusConfig` into shared `src/lib/statusConfig.ts`
+- [ ] Wire up `error_logs` table to `logger.ts` (currently console-only)
+- [ ] Split oversized components: `AddReturnDialog` (278 lines), `ReturnDetailsDialog` (202 lines), `Connections` page (306 lines), `useGmailConnection` hook (~400 lines)
 - [ ] Increase test coverage beyond 1 placeholder test
+- [ ] Implement Plaid integration for refund monitoring
 
 ## Session Log
 
@@ -64,14 +68,22 @@ A web app for tracking online product returns from initiation to refund. Users c
 - Parallelized email fetching: `processEmail()` extracted, `Promise.allSettled` batches of 10, PDF attachments in parallel
 - Consolidated toast to Sonner: migrated 6 files, deleted 4 legacy files, uninstalled `@radix-ui/react-toast`
 
-### 2026-04-17
-- Deleted deprecated `gmail-auth` and `gmail-callback` edge functions (replaced by `linkIdentity` flow)
-- Updated `connectGmail` in `useGmailConnection.tsx` to use `supabase.auth.linkIdentity` (the token-capture listener was already in place; only the initiator function was still calling the old edge function)
-- Confirmed toast/radix cleanup was already fully complete from 2026-02-08 session
-
 ### 2026-03-08
 - Diagnosed "Failed to decrypt token" error: Supabase Vault migration was never applied to remote DB
 - Removed token encryption entirely from `gmail-scan` and `gmail-callback` — tokens stored as plaintext
 - Diagnosed Google OAuth 403 error: likely caused by OAuth app "Internal" type or redirect URI mismatch
 - Rewrote Gmail OAuth flow: replaced `gmail-auth`/`gmail-callback` edge functions with `supabase.auth.linkIdentity({ provider: 'google' })` in `useGmailConnection.tsx`
 - **Next steps**: Enable Google in Supabase Auth Settings, add Supabase callback URL to Google Cloud Console, test reconnect
+
+### 2026-04-17
+- Deleted deprecated `gmail-auth` and `gmail-callback` edge functions (replaced by `linkIdentity` flow)
+- Updated `connectGmail` in `useGmailConnection.tsx` to use `supabase.auth.linkIdentity` (the token-capture listener was already in place; only the initiator function was still calling the old edge function)
+- Confirmed toast/radix cleanup was already fully complete from 2026-02-08 session
+
+### 2026-04-21
+- Extracted duplicated `statusConfig` objects into `src/lib/statusConfig.ts`
+  - `returnStatusConfig`: typed `Record<ReturnStatus, { label, icon, color, progress }>` — replaces local copies in `ReturnCard` and `ReturnDetailsDialog`
+  - `trackingStatusConfig`: typed `Record<TrackingStatus, { label, icon, color }>` — replaces local copy in `TrackingDetails`
+  - Removed now-unused lucide icon imports from `ReturnCard` and `TrackingDetails`
+  - TypeScript passes cleanly; pushed to branch `claude/implement-todo-item-Hwfwv`
+- **Next up**: Wire `error_logs` table to `logger.ts`, then tackle component splits or Gmail reconnect testing
