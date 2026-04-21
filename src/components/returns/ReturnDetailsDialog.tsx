@@ -15,6 +15,7 @@ import { AddTrackingDialog } from './AddTrackingDialog';
 import { TrackingDetails } from './TrackingDetails';
 import { useReturns } from '@/hooks/useReturns';
 import { toast } from 'sonner';
+import { returnStatusConfig } from '@/lib/statusConfig';
 import type { Return } from '@/lib/types';
 
 interface ReturnDetailsDialogProps {
@@ -23,22 +24,12 @@ interface ReturnDetailsDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-const statusConfig = {
-  initiated: { label: 'Initiated', color: 'bg-muted text-muted-foreground' },
-  label_created: { label: 'Label Created', color: 'bg-muted text-muted-foreground' },
-  in_transit: { label: 'In Transit', color: 'status-active' },
-  delivered: { label: 'Delivered', color: 'status-awaiting' },
-  awaiting_refund: { label: 'Awaiting Refund', color: 'status-awaiting' },
-  refunded: { label: 'Refunded', color: 'status-completed' },
-  disputed: { label: 'Disputed', color: 'status-disputed' },
-};
-
 export function ReturnDetailsDialog({ returnItem, open, onOpenChange }: ReturnDetailsDialogProps) {
   const { deleteReturn, updateReturn } = useReturns();
 
   if (!returnItem) return null;
 
-  const config = statusConfig[returnItem.status];
+  const config = returnStatusConfig[returnItem.status];
 
   const formatCurrency = (amount: number | undefined, currency: string | null) => {
     if (amount == null) return '—';

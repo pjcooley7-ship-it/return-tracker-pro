@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { format } from 'date-fns';
-import { Package, Truck, Clock, CheckCircle, AlertTriangle } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 import { ReturnDetailsDialog } from '@/components/returns/ReturnDetailsDialog';
+import { returnStatusConfig } from '@/lib/statusConfig';
 import type { Return } from '@/lib/types';
 
 interface ReturnCardProps {
@@ -13,19 +13,9 @@ interface ReturnCardProps {
   onClick?: () => void;
 }
 
-const statusConfig = {
-  initiated: { label: 'Initiated', icon: Package, color: 'bg-muted text-muted-foreground', progress: 10 },
-  label_created: { label: 'Label Created', icon: Package, color: 'bg-muted text-muted-foreground', progress: 25 },
-  in_transit: { label: 'In Transit', icon: Truck, color: 'status-active', progress: 50 },
-  delivered: { label: 'Delivered', icon: CheckCircle, color: 'status-awaiting', progress: 75 },
-  awaiting_refund: { label: 'Awaiting Refund', icon: Clock, color: 'status-awaiting', progress: 85 },
-  refunded: { label: 'Refunded', icon: CheckCircle, color: 'status-completed', progress: 100 },
-  disputed: { label: 'Disputed', icon: AlertTriangle, color: 'status-disputed', progress: 0 },
-};
-
 export function ReturnCard({ returnItem, onClick }: ReturnCardProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const config = statusConfig[returnItem.status];
+  const config = returnStatusConfig[returnItem.status];
   const StatusIcon = config.icon;
 
   const handleClick = () => {
