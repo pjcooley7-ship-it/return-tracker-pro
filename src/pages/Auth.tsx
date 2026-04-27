@@ -83,21 +83,21 @@ export default function Auth() {
     }
   };
 
-  const handleGoogleSignIn = async () => {
+  const handleOAuthSignIn = async (provider: 'google' | 'apple') => {
     setIsLoading(true);
     try {
-      const result = await lovable.auth.signInWithOAuth('google', {
+      const result = await lovable.auth.signInWithOAuth(provider, {
         redirect_uri: window.location.origin,
       });
       if (result.error) {
-        toast.error('Google sign-in failed', { description: result.error.message });
+        toast.error(`${provider === 'google' ? 'Google' : 'Apple'} sign-in failed`, { description: result.error.message });
         setIsLoading(false);
         return;
       }
       if (result.redirected) return;
       navigate('/');
     } catch (err) {
-      toast.error('Error', { description: 'Could not sign in with Google. Please try again.' });
+      toast.error('Error', { description: `Could not sign in with ${provider}. Please try again.` });
       setIsLoading(false);
     }
   };
