@@ -77,81 +77,34 @@ export function useGmailConnection() {
     fetchGmailAccount();
   }, [fetchGmailAccount]);
 
-  // Save Google provider tokens into connected_accounts after OAuth completes
-  const saveGmailTokens = useCallback(async (accessToken: string, refreshToken: string | null, userId: string) => {
-    let gmailEmail: string | null = null;
-    try {
-      const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (res.ok) {
-        const info = await res.json();
-        gmailEmail = info.email ?? null;
-      }
-    } catch { /* ignore — email is optional */ }
-
-    const accountData = {
-      user_id: userId,
-      account_type: 'gmail',
-      account_identifier: gmailEmail,
-      access_token_encrypted: accessToken,
-      refresh_token_encrypted: refreshToken,
-      token_expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
-      is_active: true,
-      last_sync_at: null,
-      metadata: {},
-    };
-
-    const { data: existing } = await supabase
-      .from('connected_accounts')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('account_type', 'gmail')
-      .single();
-
-    const { error } = existing
-      ? await supabase.from('connected_accounts').update(accountData).eq('id', existing.id)
-      : await supabase.from('connected_accounts').insert(accountData);
-
-    if (error) {
-      logger.error('Error saving Gmail tokens', { source: 'useGmailConnection', metadata: { error } });
-      toast.error('Connection Failed', { description: 'Could not save Gmail connection. Please try again.' });
+  // Connect Gmail via custom OAuth edge function (gmail-auth)
+  // The edge function returns a Google OAuth URL with gmail.readonly scope.
+  // After user consents, gmail-callback stores tokens in connected_accounts.
+  const connectGmail = async () => {
+    if (!session?.access_token) {
+      toast.error('Please sign in first');
       return;
     }
-
-    await fetchGmailAccount();
-    toast.success('Gmail Connected!', { description: `Connected${gmailEmail ? ` as ${gmailEmail}` : ''}.` });
-  }, [fetchGmailAccount]);
-
-  // Listen for the OAuth return — provider_token is only available in this callback
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, newSession) => {
-        if (event === 'USER_UPDATED' && newSession?.provider_token && newSession.user) {
-          await saveGmailTokens(
-            newSession.provider_token,
-            newSession.provider_refresh_token ?? null,
-            newSession.user.id,
-          );
-        }
-      }
-    );
-    return () => subscription.unsubscribe();
-  }, [saveGmailTokens]);
-
-  // Connect Gmail via Supabase linkIdentity (redirects to Google OAuth)
-  const connectGmail = async () => {
     setIsConnecting(true);
     try {
-      const { error } = await supabase.auth.linkIdentity({
-        provider: 'google',
-        options: {
-          scopes: 'https://www.googleapis.com/auth/gmail.readonly',
-          redirectTo: `${window.location.origin}/connections`,
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/gmail-auth`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
         },
-      });
-      if (error) throw error;
-      // Browser redirects to Google; isConnecting stays true intentionally
+      );
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error(errBody.error || `Failed to start OAuth (${response.status})`);
+      }
+      const { authUrl } = await response.json();
+      if (!authUrl) throw new Error('No auth URL returned');
+      // Redirect to Google; isConnecting stays true intentionally
+      window.location.href = authUrl;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
       logger.error('Error connecting Gmail', { source: 'useGmailConnection', metadata: { error: err } });
