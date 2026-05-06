@@ -1,43 +1,42 @@
-# End-to-End Test Plan: Login → Gmail Scan → Save Returns
+# Fix: Google 403 on "Connect Gmail"
 
-## What I already verified (no clicks required)
+## What the error means
 
-| Step | Status | Notes |
-|---|---|---|
-| `/auth` page renders | Works | Email/password + Google + Apple buttons all present |
-| Email/password sign-in | Works | You're already signed in as `pjcooley7@gmail.com` |
-| Google managed sign-in button | Wired | Uses `lovable.auth.signInWithOAuth("google")` |
-| Apple managed sign-in button | Wired | Same flow as Google |
-| Dashboard loads with returns | Works | Shows 1 active + 1 awaiting refund (H&M) — leftover test data |
-| `/connections` page renders | Works | Both Gmail + Bank cards visible |
-| Gmail edge functions deployed | Yes | `gmail-auth` booted 1 min ago, `gmail-callback` & `gmail-scan` deployed |
-| `connected_accounts` table | Empty | No Gmail connection currently saved for any user |
-| Required secrets present | Yes | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `TRACKINGMORE_API_KEY` all set |
+The OAuth URL being generated is correct (verified in network logs). The 403 is returned by `accounts.google.com` itself, before any user consent. This is a configuration issue with the Google Cloud OAuth client (`87500962869-...apps.googleusercontent.com`), not with our app code.
 
-## Known gap I spotted while reading the code
+## Most likely cause (90%): OAuth consent screen is in Testing mode
 
-`supabase/functions/gmail-callback/index.ts` hardcodes the post-OAuth redirect to `https://id-preview--...lovable.app`. If you start the Gmail connect flow from any other origin (the `lovableproject.com` sandbox preview, or the published `refund-angel.lovable.app`), Google will send you back to the wrong domain after consent — you'll end up on the preview instead of where you started. We should make this dynamic before the live test, or at least be aware of it.
+Google requires the `gmail.readonly` scope (a "restricted" scope) to either:
+- Have the app **verified** by Google (multi-week review process), or
+- Be in **Testing** mode with each user explicitly added to the test-user list (max 100 users)
 
-## The live test we need you to run
+If your project is in Testing mode and `pjcooley7@gmail.com` isn't listed as a test user, Google blocks with exactly the 403 you saw.
 
-The Google OAuth consent screen requires real human clicks on `accounts.google.com` (third-party domain, no sandbox access), so the actual Gmail connect step must be done by you. I'll watch the logs and DB in real time.
+## Action for you (no code changes needed first)
 
-### Steps
+Go to Google Cloud Console for the project that owns client ID `87500962869-...`:
 
-1. **You**: On the published app (`refund-angel.lovable.app`) or the preview, sign out and sign back in with **Google** (managed) to verify that flow end-to-end.
-2. **You**: Go to **Connected Accounts** → click **Connect Gmail**.
-3. **You**: Complete the Google consent screen (grant `gmail.readonly`).
-4. **Me**: Verify a row appeared in `connected_accounts` with `is_active=true` and a non-null `refresh_token_encrypted`.
-5. **You**: Pick a scan range (try **Last 30 days**) and click **Scan Emails**.
-6. **Me**: Tail `gmail-scan` edge logs, confirm it returns scanned emails + detected returns, and check the `ScannedEmailsPanel` populates.
-7. **You**: For one detected return, confirm vendor + click **Save**.
-8. **Me**: Verify a new row in `returns` and that the dashboard reflects it.
+1. **APIs & Services → OAuth consent screen**
+2. Check **Publishing status**:
+   - If **Testing** → scroll to **Test users** → click **+ Add users** → add `pjcooley7@gmail.com` (and any other emails you want to test with) → Save.
+   - If **In production** but unverified → you'll see a verification banner; restricted scopes won't work for non-test users until verified.
+3. **APIs & Services → Credentials → click your OAuth 2.0 Client ID**
+   - Under **Authorized redirect URIs**, confirm this exact URL is listed:
+     `https://weluosjthorckfmhjaol.supabase.co/functions/v1/gmail-callback`
+   - If missing, add it and Save.
+4. **APIs & Services → Library** → confirm **Gmail API** is **Enabled**.
 
-For each step I'll report exactly what worked and what didn't, and we'll fix issues as they surface (most likely candidates: callback redirect URL, scan timeouts on large mailboxes, vendor detection misses).
+Then retry **Connect Gmail**. The 403 should be gone.
 
-## Two small fixes I'd recommend doing before the live test
+## If that doesn't fix it
 
-1. **Make `gmail-callback` redirect dynamic** — pass the origin through OAuth `state` so users are returned to whichever domain they started from (preview vs. published vs. custom domain).
-2. **Clear leftover test data** — the H&M returns currently on your dashboard look like seed data from earlier; deleting them gives you a clean baseline so any new returns from the scan are obviously new.
+Tell me what the OAuth consent screen says (Testing vs In production, User type Internal vs External, any verification warnings), and I'll diagnose further. Possible fallbacks:
 
-Approve this and I'll switch to build mode, apply the two fixes, then walk you through the live test step by step.
+- **Switch to Lovable-managed Google OAuth credentials** for sign-in (no Gmail scope, no verification needed) and keep your custom client only for the Gmail-scan flow once test users are added.
+- **Reduce scope risk**: `gmail.readonly` is restricted; there's no lighter-weight alternative for reading email content, so verification is the only long-term path for non-test users.
+
+## What I'm NOT changing in code right now
+
+The current `gmail-auth` edge function is generating the right URL with the right scope, redirect URI, and HMAC-signed state. No code change will fix a Google Cloud configuration issue. Once you add the test user, the existing flow should work end-to-end.
+
+Approve this and I'll just monitor — no edits needed unless step 1–4 fails.
