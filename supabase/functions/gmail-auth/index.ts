@@ -91,7 +91,8 @@ Deno.serve(async (req) => {
     const redirectUri = `${supabaseUrl}/functions/v1/gmail-callback`;
 
     // Generate HMAC-signed state to prevent forgery
-    const statePayload = btoa(JSON.stringify({ userId, timestamp: Date.now() }));
+    // Generate HMAC-signed state to prevent forgery (include origin so callback can redirect there)
+    const statePayload = btoa(JSON.stringify({ userId, timestamp: Date.now(), origin }));
     const stateSig = await hmacSign(statePayload, clientSecret);
     const state = `${statePayload}.${stateSig}`;
 
