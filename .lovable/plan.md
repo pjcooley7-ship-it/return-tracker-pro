@@ -1,88 +1,43 @@
+# End-to-End Test Plan: Login → Gmail Scan → Save Returns
 
+## What I already verified (no clicks required)
 
-# ReturnTracker - Return Lifecycle Dashboard
+| Step | Status | Notes |
+|---|---|---|
+| `/auth` page renders | Works | Email/password + Google + Apple buttons all present |
+| Email/password sign-in | Works | You're already signed in as `pjcooley7@gmail.com` |
+| Google managed sign-in button | Wired | Uses `lovable.auth.signInWithOAuth("google")` |
+| Apple managed sign-in button | Wired | Same flow as Google |
+| Dashboard loads with returns | Works | Shows 1 active + 1 awaiting refund (H&M) — leftover test data |
+| `/connections` page renders | Works | Both Gmail + Bank cards visible |
+| Gmail edge functions deployed | Yes | `gmail-auth` booted 1 min ago, `gmail-callback` & `gmail-scan` deployed |
+| `connected_accounts` table | Empty | No Gmail connection currently saved for any user |
+| Required secrets present | Yes | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `TRACKINGMORE_API_KEY` all set |
 
-A comprehensive web app to track your online returns from purchase → shipment → refund, with smart notifications and automated follow-ups.
+## Known gap I spotted while reading the code
 
----
+`supabase/functions/gmail-callback/index.ts` hardcodes the post-OAuth redirect to `https://id-preview--...lovable.app`. If you start the Gmail connect flow from any other origin (the `lovableproject.com` sandbox preview, or the published `refund-angel.lovable.app`), Google will send you back to the wrong domain after consent — you'll end up on the preview instead of where you started. We should make this dynamic before the live test, or at least be aware of it.
 
-## 1. Dashboard & Home Screen
+## The live test we need you to run
 
-**Main dashboard showing return status at a glance:**
-- **Active Returns** - Cards showing returns currently in transit with tracking status, estimated delivery, and days until expected refund
-- **Awaiting Refund** - Returns delivered but refund not yet received, with countdown timer based on user-set threshold
-- **Completed** - Historical view of successfully refunded returns
-- **Quick Stats** - Total returns tracked, money recovered, average refund time
+The Google OAuth consent screen requires real human clicks on `accounts.google.com` (third-party domain, no sandbox access), so the actual Gmail connect step must be done by you. I'll watch the logs and DB in real time.
 
----
+### Steps
 
-## 2. Email Connection & Scanning
+1. **You**: On the published app (`refund-angel.lovable.app`) or the preview, sign out and sign back in with **Google** (managed) to verify that flow end-to-end.
+2. **You**: Go to **Connected Accounts** → click **Connect Gmail**.
+3. **You**: Complete the Google consent screen (grant `gmail.readonly`).
+4. **Me**: Verify a row appeared in `connected_accounts` with `is_active=true` and a non-null `refresh_token_encrypted`.
+5. **You**: Pick a scan range (try **Last 30 days**) and click **Scan Emails**.
+6. **Me**: Tail `gmail-scan` edge logs, confirm it returns scanned emails + detected returns, and check the `ScannedEmailsPanel` populates.
+7. **You**: For one detected return, confirm vendor + click **Save**.
+8. **Me**: Verify a new row in `returns` and that the dashboard reflects it.
 
-**Secure Gmail integration:**
-- OAuth-based Gmail connection (no password storage)
-- Automatic scanning for purchase confirmation emails (Amazon, Target, Walmart, etc.)
-- Detection of return initiation and return shipping confirmation emails
-- Extraction of key data: order number, items, amount, vendor, tracking number
-- Manual entry option for returns from unsupported retailers
+For each step I'll report exactly what worked and what didn't, and we'll fix issues as they surface (most likely candidates: callback redirect URL, scan timeouts on large mailboxes, vendor detection misses).
 
----
+## Two small fixes I'd recommend doing before the live test
 
-## 3. Return Tracking Engine
+1. **Make `gmail-callback` redirect dynamic** — pass the origin through OAuth `state` so users are returned to whichever domain they started from (preview vs. published vs. custom domain).
+2. **Clear leftover test data** — the H&M returns currently on your dashboard look like seed data from earlier; deleting them gives you a clean baseline so any new returns from the scan are obviously new.
 
-**Multi-carrier shipment tracking:**
-- Automatic tracking number extraction from return confirmation emails
-- Support for major carriers: UPS, FedEx, USPS, DHL, and international carriers
-- Real-time status updates: In Transit, Out for Delivery, Delivered
-- Delivery confirmation with timestamp
-
----
-
-## 4. Bank Account Integration
-
-**Secure financial data connection:**
-- Plaid-powered bank and credit card linking
-- Automatic transaction monitoring for refunds
-- Smart matching: vendor name + approximate amount + time window
-- Match confirmation UI for ambiguous cases
-- Support for multiple accounts
-
----
-
-## 5. Refund Monitoring & Alerts
-
-**Intelligent notification system:**
-- User-configurable refund expectation window (e.g., "notify me if no refund within 14 days of delivery")
-- Push notifications for: delivery confirmation, refund received, refund overdue
-- Email digest option for weekly summaries
-- In-app notification center
-
----
-
-## 6. Automated Follow-up Drafts
-
-**Smart email assistance:**
-- When refund is overdue, prompt user to follow up
-- Pre-drafted email template with: order details, return tracking info, delivery confirmation, expected refund amount
-- One-click copy or direct send option
-- Vendor contact lookup when available
-
----
-
-## 7. User Accounts & Settings
-
-**Personal account management:**
-- Email/password authentication with secure signup
-- Connected accounts management (Gmail, banks)
-- Notification preferences
-- Refund threshold settings per vendor or global default
-- Data export option
-
----
-
-## Design Approach
-
-- **Dashboard-focused layout** with status cards, progress indicators, and data tables
-- Clean navigation with sidebar for main sections
-- Mobile-responsive design
-- Dark/light mode support
-
+Approve this and I'll switch to build mode, apply the two fixes, then walk you through the live test step by step.
