@@ -225,8 +225,11 @@ export default function Connections() {
               </div>
             ) : (
               <>
-                <p className="text-sm text-muted-foreground mb-4">
+                <p className="text-sm text-muted-foreground mb-2">
                   Connect your Gmail to automatically detect purchase confirmations, return labels, and shipping updates.
+                </p>
+                <p className="text-xs text-muted-foreground mb-4">
+                  Mailbox scanning uses Google's restricted Gmail API. While the app is in testing, Google may show a "not verified" warning or block access unless your email is added as a test user.
                 </p>
                 <Button
                   className="w-full"
