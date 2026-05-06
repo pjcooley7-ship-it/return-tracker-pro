@@ -95,7 +95,10 @@ Deno.serve(async (req) => {
       return Response.redirect(`${appUrl}/connections?error=invalid_state`, 302);
     }
 
-    const { userId } = stateData;
+    const { userId, origin } = stateData;
+    if (origin && typeof origin === "string" && /^https?:\/\//.test(origin)) {
+      appUrl = origin;
+    }
 
     // Check state timestamp (expires after 10 minutes)
     if (Date.now() - stateData.timestamp > 600000) {
