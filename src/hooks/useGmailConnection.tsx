@@ -95,6 +95,7 @@ export function useGmailConnection() {
             Authorization: `Bearer ${session.access_token}`,
             'Content-Type': 'application/json',
           },
+          body: JSON.stringify({ origin: window.location.origin }),
         },
       );
       if (!response.ok) {

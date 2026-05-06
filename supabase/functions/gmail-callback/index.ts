@@ -52,8 +52,9 @@ Deno.serve(async (req) => {
     const state = url.searchParams.get("state");
     const error = url.searchParams.get("error");
 
-    // Get the app URL for redirects
-    const appUrl = Deno.env.get("APP_URL") || "https://id-preview--9cd618c9-dc5b-4b50-b133-1e902eb0492d.lovable.app";
+    // Default app URL (overridden by origin from state if present)
+    const fallbackAppUrl = Deno.env.get("APP_URL") || "https://id-preview--9cd618c9-dc5b-4b50-b133-1e902eb0492d.lovable.app";
+    let appUrl = fallbackAppUrl;
 
     if (error) {
       structuredLog("ERROR", "OAuth error from Google", { oauthError: error });
@@ -94,7 +95,10 @@ Deno.serve(async (req) => {
       return Response.redirect(`${appUrl}/connections?error=invalid_state`, 302);
     }
 
-    const { userId } = stateData;
+    const { userId, origin } = stateData;
+    if (origin && typeof origin === "string" && /^https?:\/\//.test(origin)) {
+      appUrl = origin;
+    }
 
     // Check state timestamp (expires after 10 minutes)
     if (Date.now() - stateData.timestamp > 600000) {

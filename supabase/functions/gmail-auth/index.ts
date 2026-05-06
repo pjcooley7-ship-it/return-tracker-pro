@@ -70,6 +70,13 @@ Deno.serve(async (req) => {
     const userId = userData.user.id;
     const userEmail = userData.user.email;
 
+    // Capture origin so the callback can redirect back to whichever domain initiated the flow
+    let origin: string | null = null;
+    try {
+      const body = await req.json().catch(() => ({}));
+      if (body && typeof body.origin === "string") origin = body.origin;
+    } catch (_) { /* no body */ }
+
     // Get Google OAuth credentials
     const clientId = Deno.env.get("GOOGLE_CLIENT_ID");
     const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET");
@@ -84,7 +91,8 @@ Deno.serve(async (req) => {
     const redirectUri = `${supabaseUrl}/functions/v1/gmail-callback`;
 
     // Generate HMAC-signed state to prevent forgery
-    const statePayload = btoa(JSON.stringify({ userId, timestamp: Date.now() }));
+    // Generate HMAC-signed state to prevent forgery (include origin so callback can redirect there)
+    const statePayload = btoa(JSON.stringify({ userId, timestamp: Date.now(), origin }));
     const stateSig = await hmacSign(statePayload, clientSecret);
     const state = `${statePayload}.${stateSig}`;
 
